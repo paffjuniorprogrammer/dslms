@@ -3,7 +3,7 @@
  *
  * Student-facing live class experience.
  * - Shows teacher's camera (main) + own camera (corner PiP)
- * - Real-time chat panel
+ * - Real-time chat panel (responsively adapts to mobile phone & desktop)
  * - Raise hand / mic / camera controls
  * - Receives exercise_launch → renders quiz overlay
  * - Sends exercise_submit when done
@@ -11,8 +11,8 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-  X, Send, Hand, Mic, MicOff, Camera, CameraOff, Pin,
-  Radio, Users, MessageCircle, ClipboardList, CheckCircle2
+  X, Send, Hand, Mic, MicOff, Camera, CameraOff,
+  Radio, Users, MessageCircle, ClipboardList, CheckCircle2, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useLiveChat } from '@/hooks/useLiveChat';
@@ -72,16 +72,20 @@ export default function StudentLiveRoom({
     channel: channelRef.current,
   });
 
-  // ─── Find host stream ─────────────────────────────────────────────────────
+  // ─── Find host / teacher stream ───────────────────────────────────────────
 
   const hostPeer = useMemo(() => {
-    for (const peer of remotePeers.values()) {
-      if (peer.role === 'host') return peer;
-    }
-    return null;
+    const peers = Array.from(remotePeers.values());
+    return (
+      peers.find(p => p.role === 'teacher' || p.role === 'host' || p.role === 'school_admin' || p.role === 'super_admin') ||
+      peers.find(p => p.stream !== null) ||
+      peers[0] ||
+      null
+    );
   }, [remotePeers]);
 
   const hostStream = hostPeer?.stream ?? null;
+  const hasHostVideo = Boolean(hostStream && hostPeer?.cameraState === 'on');
 
   // ─── Exercise state (received from host) ──────────────────────────────────
 
@@ -113,7 +117,6 @@ export default function StudentLiveRoom({
 
     // Handle mute / removal from host
     ch.on('broadcast', { event: 'mute_all' }, () => {
-      // Auto-mute mic
       if (micState === 'on') toggleMic();
     });
 
@@ -184,22 +187,21 @@ export default function StudentLiveRoom({
     return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
-  // ─── Local video ref ──────────────────────────────────────────────────────
+  // ─── Callback refs for auto-playing streams ───────────────────────────────
 
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const hostVideoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [localStream]);
-
-  useEffect(() => {
-    if (hostVideoRef.current) {
-      hostVideoRef.current.srcObject = hostStream;
+  const setHostVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    if (el && hostStream) {
+      if (el.srcObject !== hostStream) el.srcObject = hostStream;
+      el.play().catch(() => {});
     }
   }, [hostStream]);
+
+  const setLocalVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    if (el && localStream) {
+      if (el.srcObject !== localStream) el.srcObject = localStream;
+      el.play().catch(() => {});
+    }
+  }, [localStream]);
 
   // ─── Chat input ───────────────────────────────────────────────────────────
 
@@ -218,184 +220,194 @@ export default function StudentLiveRoom({
     }
   };
 
-  // ─── Render ───────────────────────────────────────────────────────────────
+  const displayName = hostPeer?.name || instructorName;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-slate-950 text-white select-none">
+    <div className="fixed inset-0 z-50 flex flex-col bg-slate-950 text-white select-none overflow-hidden">
 
-      {/* Top bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-white/10 flex-shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <button onClick={onLeave} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition">
+      {/* Top Header Bar */}
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 bg-slate-900 border-b border-white/10 flex-shrink-0 z-20">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button onClick={onLeave} className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition">
             <X size={18} />
           </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-white font-bold text-sm truncate max-w-[200px]">{classTitle}</h2>
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-extrabold">
-                <Radio size={9} className="animate-pulse" /> LIVE
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <h2 className="text-white font-bold text-xs sm:text-sm truncate max-w-[140px] sm:max-w-[220px]">{classTitle}</h2>
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider flex-shrink-0">
+                <Radio size={8} className="animate-pulse" /> LIVE
               </span>
             </div>
-            <p className="text-slate-400 text-xs">Teacher: {instructorName} • Code: {accessCode}</p>
+            <p className="text-slate-400 text-[10px] sm:text-xs truncate">
+              {displayName} • <span className="font-mono font-bold text-blue-300">{accessCode}</span>
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="text-slate-300 text-xs font-mono bg-white/5 px-2 py-1 rounded-lg">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+          <div className="text-slate-300 text-[11px] font-mono bg-white/5 px-2 py-1 rounded-lg">
             {formatTime(elapsed)}
           </div>
           <button
             onClick={() => setShowChat(p => !p)}
-            className={`p-2 rounded-lg transition-all ${showChat ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/10'}`}
+            className={`p-1.5 sm:p-2 rounded-xl transition-all ${showChat ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white bg-white/5'}`}
+            title="Toggle Live Chat"
           >
             <MessageCircle size={16} />
           </button>
-          <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 text-slate-300 text-xs">
+          <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 text-slate-300 text-[11px]">
             <Users size={12} /> {remotePeers.size + 1}
           </div>
         </div>
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex min-h-0">
+      {/* Main Layout Container */}
+      <div className="flex-1 flex flex-col md:flex-row min-h-0 relative overflow-hidden">
 
-        {/* Video area */}
-        <div className="flex-1 flex flex-col min-w-0 relative">
+        {/* Video Area */}
+        <div className={`flex flex-col min-w-0 bg-slate-950 relative ${
+          showChat ? 'h-[40vh] md:h-full md:flex-1' : 'flex-1'
+        }`}>
 
-          {/* Teacher video (main) */}
-          <div className="flex-1 bg-slate-900 relative flex items-center justify-center min-h-0">
-            {hostStream && hostPeer?.cameraState === 'on' ? (
+          {/* Main Stage (Teacher Screen / Camera) */}
+          <div className="flex-1 bg-slate-900 relative flex items-center justify-center min-h-0 overflow-hidden">
+            {hasHostVideo ? (
               <video
-                ref={hostVideoRef}
+                ref={setHostVideoRef}
                 autoPlay
                 playsInline
-                className="w-full h-full object-contain"
+                className="w-full h-full object-cover"
               />
             ) : (
-              <div className="flex flex-col items-center justify-center gap-3 text-slate-400">
-                <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white text-3xl font-bold shadow-xl">
-                  {instructorName.charAt(0).toUpperCase()}
+              <div className="flex flex-col items-center justify-center gap-2.5 text-slate-400 p-4">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white text-2xl font-black shadow-xl ring-4 ring-white/5">
+                  {displayName.charAt(0).toUpperCase()}
                 </div>
                 <div className="text-center">
-                  <p className="font-semibold text-slate-200">{hostPeer ? instructorName : 'Waiting for teacher...'}</p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {hostPeer ? 'Camera is off' : 'Teacher has not joined yet'}
+                  <p className="font-bold text-slate-200 text-xs sm:text-sm">{hostPeer ? displayName : 'Waiting for teacher...'}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {hostPeer ? 'Teacher camera is off' : 'Teacher has not joined yet'}
                   </p>
                 </div>
               </div>
             )}
 
-            {/* Teacher label */}
-            <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-xl text-xs font-semibold text-white flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${hostPeer ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
-              {instructorName}
-              {hostPeer?.micState === 'on' && <Mic size={11} className="text-green-400" />}
+            {/* Teacher Name Tag */}
+            <div className="absolute bottom-2.5 left-2.5 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-xl text-[11px] font-semibold text-white flex items-center gap-1.5 z-10">
+              <span className={`w-2 h-2 rounded-full ${hostPeer ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span className="truncate max-w-[120px]">{displayName}</span>
+              {hostPeer?.micState === 'on' && <Mic size={11} className="text-emerald-400 flex-shrink-0" />}
             </div>
 
-            {/* Own camera (PiP) */}
-            <div className="absolute bottom-3 right-3 w-28 h-20 rounded-xl overflow-hidden bg-slate-800 border-2 border-slate-700 shadow-xl">
+            {/* Own Camera (Picture-in-Picture) */}
+            <div className="absolute bottom-2.5 right-2.5 w-20 h-16 sm:w-28 sm:h-20 rounded-xl overflow-hidden bg-slate-900 border border-white/20 shadow-2xl z-10">
               {localStream && cameraState === 'on' ? (
                 <video
-                  ref={localVideoRef}
+                  ref={setLocalVideoRef}
                   autoPlay
                   playsInline
                   muted
                   className="w-full h-full object-cover scale-x-[-1]"
                 />
               ) : (
-                <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs">
-                  <Camera size={18} />
+                <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 bg-slate-950">
+                  <CameraOff size={14} />
+                  <span className="text-[9px] mt-0.5">You (Off)</span>
                 </div>
               )}
-              <div className="absolute bottom-1 left-1 right-1 text-center text-[9px] text-white/70 font-semibold truncate">You</div>
             </div>
+
+            {/* Media error banner */}
+            {mediaError && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-rose-600 text-white text-[11px] font-bold rounded-xl shadow-xl z-30">
+                {mediaError}
+              </div>
+            )}
           </div>
 
-          {/* Media error */}
-          {mediaError && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-red-600 text-white text-xs font-bold rounded-xl shadow-xl z-50">
-              {mediaError}
-            </div>
-          )}
-
-          {/* Controls bar */}
-          <div className="flex-shrink-0 bg-slate-900 border-t border-white/10 px-4 py-3 flex items-center justify-center gap-3">
+          {/* Quick Floating Controls on Mobile / Bottom Bar */}
+          <div className="flex-shrink-0 bg-slate-900/90 border-t border-white/10 px-3 py-2 flex items-center justify-center gap-2 sm:gap-3 z-10">
             {/* Mic */}
             <button
               onClick={toggleMic}
-              className={`flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all ${
-                micState === 'on' ? 'bg-slate-800 text-white' : 'bg-red-600/20 text-red-400 border border-red-500/30'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                micState === 'on' ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-600/20 text-rose-400 border border-rose-500/30'
               }`}
             >
-              {micState === 'on' ? <Mic size={18} /> : <MicOff size={18} />}
-              <span className="text-[10px] font-semibold">{micState === 'on' ? 'Mic On' : 'Muted'}</span>
+              {micState === 'on' ? <Mic size={14} /> : <MicOff size={14} />}
+              <span>{micState === 'on' ? 'Unmuted' : 'Muted'}</span>
             </button>
 
             {/* Camera */}
             <button
               onClick={toggleCamera}
-              className={`flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all ${
-                cameraState === 'on' ? 'bg-slate-800 text-white' : 'bg-slate-800/50 text-slate-400'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                cameraState === 'on' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 border border-white/10'
               }`}
             >
-              {cameraState === 'on' ? <Camera size={18} /> : <CameraOff size={18} />}
-              <span className="text-[10px] font-semibold">{cameraState === 'on' ? 'Camera' : 'Off'}</span>
+              {cameraState === 'on' ? <Camera size={14} /> : <CameraOff size={14} />}
+              <span>{cameraState === 'on' ? 'Video On' : 'Video Off'}</span>
             </button>
 
             {/* Hand raise */}
             <button
               onClick={toggleHand}
-              className={`flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all ${
-                localHandRaised ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 animate-pulse' : 'bg-slate-800 text-slate-400'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                localHandRaised ? 'bg-amber-500/30 text-amber-300 border border-amber-400/50 animate-pulse' : 'bg-slate-800 text-slate-400 border border-white/10'
               }`}
             >
-              <Hand size={18} />
-              <span className="text-[10px] font-semibold">{localHandRaised ? 'Hand Raised' : 'Raise Hand'}</span>
+              <Hand size={14} />
+              <span>{localHandRaised ? 'Raised' : 'Raise Hand'}</span>
             </button>
 
             {/* Leave */}
             <button
               onClick={onLeave}
-              className="flex flex-col items-center gap-1 px-4 py-2 rounded-xl bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600 hover:text-white transition-all"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition-all"
             >
-              <X size={18} />
-              <span className="text-[10px] font-semibold">Leave</span>
+              <X size={14} />
+              <span>Leave</span>
             </button>
           </div>
         </div>
 
-        {/* Chat panel */}
+        {/* Live Chat Panel — Dedicated Scroll Area */}
         {showChat && (
-          <div className="w-72 flex-shrink-0 flex flex-col border-l border-white/10 bg-slate-900">
-            <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2 flex-shrink-0">
-              <MessageCircle size={15} className="text-blue-400" />
-              <h3 className="text-sm font-semibold text-white">Live Chat</h3>
-              <span className="ml-auto text-xs text-slate-500">{messages.length} messages</span>
+          <div className="flex-1 md:w-80 md:flex-initial flex flex-col min-h-0 bg-slate-900 border-t md:border-t-0 md:border-l border-white/10 z-10">
+            <div className="px-3.5 py-2 border-b border-white/10 flex items-center justify-between flex-shrink-0 bg-slate-900/60">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                <MessageCircle size={14} className="text-blue-400" />
+                <span>Live Chat</span>
+              </div>
+              <span className="text-[10px] text-slate-400">{messages.length} messages</span>
             </div>
 
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+            {/* Message List */}
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2.5 min-h-0">
               {messages.length === 0 ? (
-                <div className="text-center text-slate-500 text-xs py-8">No messages yet. Say hello! 👋</div>
+                <div className="text-center text-slate-500 text-xs py-8">
+                  No messages yet. Ask a question or say hello! 👋
+                </div>
               ) : messages.map(msg => {
                 const isOwn = msg.senderId === studentId;
                 return (
                   <div key={msg.id} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
                     <div className="flex items-center gap-1 mb-0.5">
-                      <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white ${
-                        msg.senderRole === 'host' ? 'bg-blue-500' : 'bg-emerald-500'
-                      }`}>
-                        {msg.senderName.charAt(0)}
-                      </div>
-                      <span className="text-[10px] font-semibold text-slate-400">{msg.senderName}</span>
+                      <span className="text-[10px] font-bold text-slate-400">
+                        {isOwn ? 'You' : msg.senderName}
+                      </span>
+                      {msg.senderRole === 'teacher' && (
+                        <span className="text-[9px] px-1 bg-indigo-500/20 text-indigo-300 rounded font-bold">Teacher</span>
+                      )}
                       {msg.senderRole === 'host' && (
-                        <span className="text-[9px] px-1 bg-blue-500/20 text-blue-300 rounded border border-blue-500/30">Teacher</span>
+                        <span className="text-[9px] px-1 bg-blue-500/20 text-blue-300 rounded font-bold">Host</span>
                       )}
                     </div>
-                    <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${
+                    <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-xs ${
                       isOwn
-                        ? 'bg-blue-600 text-white rounded-tr-sm'
-                        : msg.senderRole === 'host'
-                        ? 'bg-blue-950/70 text-slate-200 border border-blue-800/50 rounded-tl-sm'
+                        ? 'bg-blue-600 text-white rounded-tr-sm shadow-md'
+                        : msg.senderRole === 'teacher' || msg.senderRole === 'host'
+                        ? 'bg-indigo-950/80 text-indigo-100 border border-indigo-500/30 rounded-tl-sm shadow-md'
                         : 'bg-slate-800 text-slate-200 rounded-tl-sm'
                     }`}>
                       {msg.text}
@@ -405,137 +417,115 @@ export default function StudentLiveRoom({
               })}
             </div>
 
-            <form onSubmit={handleSendChat} className="p-3 border-t border-white/10 flex gap-2">
+            {/* Chat Input Box */}
+            <form onSubmit={handleSendChat} className="p-2 border-t border-white/10 bg-slate-950/80 flex items-center gap-1.5 flex-shrink-0">
               <input
                 type="text"
                 value={chatInput}
                 onChange={e => setChatInput(e.target.value)}
-                placeholder="Ask a question..."
-                className="flex-1 px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 transition"
+                placeholder="Ask a question or type message..."
+                className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
               />
               <button
                 type="submit"
                 disabled={!chatInput.trim()}
-                className="p-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl transition"
+                className="p-2 rounded-xl bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition-all"
               >
                 <Send size={14} />
               </button>
             </form>
           </div>
         )}
+
       </div>
 
-      {/* ── Exercise overlay ── */}
-      {exerciseActive && !submitted && (
-        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="flex items-center gap-3 p-5 border-b border-slate-100">
-              <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center">
-                <ClipboardList size={20} className="text-purple-600" />
+      {/* Pop-up Quiz / Live Exercise Overlay */}
+      {exerciseActive && (
+        <div className="absolute inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-purple-500/40 rounded-3xl p-6 max-w-lg w-full shadow-2xl text-white space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <ClipboardList size={18} className="text-purple-400" />
+                <h3 className="font-extrabold text-sm">Live Class Quiz</h3>
               </div>
-              <div>
-                <h3 className="font-bold text-slate-800">Live Exercise</h3>
-                <p className="text-xs text-slate-500">
-                  Question {currentQ + 1} of {exerciseQuestions.length} •{' '}
-                  {Object.keys(answers).length} answered
+              <button onClick={() => setExerciseActive(false)} className="text-slate-400 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+
+            {submitted && exerciseResult ? (
+              <div className="text-center py-4 space-y-3">
+                <CheckCircle2 size={42} className="text-emerald-400 mx-auto" />
+                <h4 className="text-lg font-black">Exercise Submitted!</h4>
+                <p className="text-2xl font-black text-purple-400">{exerciseResult.score}%</p>
+                <p className="text-xs text-slate-400">
+                  Earned {exerciseResult.earnedPoints} out of {exerciseResult.totalPoints} marks
                 </p>
+                <button
+                  onClick={() => setExerciseActive(false)}
+                  className="px-5 py-2 rounded-xl bg-purple-600 text-xs font-bold hover:bg-purple-500"
+                >
+                  Return to Class
+                </button>
               </div>
-            </div>
-
-            {/* Progress bar */}
-            <div className="w-full bg-slate-100 h-1.5">
-              <div
-                className="bg-purple-600 h-full transition-all"
-                style={{ width: `${((currentQ + 1) / exerciseQuestions.length) * 100}%` }}
-              />
-            </div>
-
-            {/* Current question */}
-            {exerciseQuestions[currentQ] && (() => {
-              const q = exerciseQuestions[currentQ];
-              const selected = answers[q.id];
-              return (
-                <div className="p-5 space-y-4">
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <p className="font-semibold text-slate-800 text-sm">{q.text}</p>
-                    {q.points && <span className="text-xs text-slate-400 mt-1 inline-block">{q.points} pts</span>}
-                  </div>
-                  <div className="space-y-2">
-                    {q.options.map((opt) => (
-                      <button
-                        key={opt}
-                        onClick={() => handleSelectAnswer(q.id, opt)}
-                        className={`w-full p-3 text-left text-sm rounded-xl border transition-all ${
-                          selected === opt
-                            ? 'bg-purple-50 border-purple-500 text-purple-900 font-semibold'
-                            : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
-                        }`}
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex gap-3 pt-2">
-                    <button
-                      onClick={() => setCurrentQ(p => Math.max(0, p - 1))}
-                      disabled={currentQ === 0}
-                      className="flex-1 py-2.5 text-xs font-semibold text-slate-600 border border-slate-200 rounded-xl hover:bg-slate-50 disabled:opacity-40"
-                    >
-                      Previous
-                    </button>
-                    {currentQ < exerciseQuestions.length - 1 ? (
-                      <button
-                        onClick={() => setCurrentQ(p => p + 1)}
-                        className="flex-1 py-2.5 text-xs font-bold text-white bg-purple-600 rounded-xl hover:bg-purple-700"
-                      >
-                        Next →
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleSubmitExercise}
-                        className="flex-1 py-2.5 text-xs font-extrabold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-md"
-                      >
-                        Submit Answers
-                      </button>
-                    )}
-                  </div>
+            ) : exerciseQuestions.length > 0 ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Question {currentQ + 1} of {exerciseQuestions.length}</span>
+                  <span>{exerciseQuestions[currentQ].points} Marks</span>
                 </div>
-              );
-            })()}
+
+                <p className="font-bold text-sm text-slate-100">
+                  {exerciseQuestions[currentQ].text}
+                </p>
+
+                <div className="space-y-2">
+                  {exerciseQuestions[currentQ].options.map((opt, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleSelectAnswer(exerciseQuestions[currentQ].id, opt)}
+                      className={`w-full text-left p-3 rounded-xl border text-xs font-medium transition-all ${
+                        answers[exerciseQuestions[currentQ].id] === opt
+                          ? 'bg-purple-600/30 border-purple-500 text-purple-200'
+                          : 'bg-slate-800/80 border-white/10 hover:bg-slate-800 text-slate-300'
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between pt-2">
+                  <button
+                    disabled={currentQ === 0}
+                    onClick={() => setCurrentQ(q => q - 1)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs disabled:opacity-40"
+                  >
+                    Previous
+                  </button>
+
+                  {currentQ < exerciseQuestions.length - 1 ? (
+                    <button
+                      onClick={() => setCurrentQ(q => q + 1)}
+                      className="px-4 py-1.5 rounded-lg bg-blue-600 text-xs font-bold"
+                    >
+                      Next
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSubmitExercise}
+                      className="px-4 py-1.5 rounded-lg bg-emerald-600 text-xs font-bold"
+                    >
+                      Submit Answers
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}
 
-      {/* Exercise result */}
-      {submitted && exerciseResult && (
-        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center space-y-4">
-            <CheckCircle2 size={48} className={`mx-auto ${exerciseResult.score >= 60 ? 'text-emerald-500' : 'text-rose-500'}`} />
-            <h3 className="text-xl font-extrabold text-slate-800">
-              {exerciseResult.score >= 60 ? '🎉 Well Done!' : 'Keep Practicing!'}
-            </h3>
-            <div className={`text-4xl font-black ${exerciseResult.score >= 60 ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {exerciseResult.score}%
-            </div>
-            <p className="text-sm text-slate-500">
-              {exerciseResult.earnedPoints}/{exerciseResult.totalPoints} points •{' '}
-              {exerciseResult.answers.filter(a => a.correct).length} correct out of {exerciseResult.answers.length}
-            </p>
-            <div className={`px-4 py-2 rounded-xl text-xs font-bold ${
-              exerciseResult.score >= 60 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
-            }`}>
-              {exerciseResult.score >= 60 ? 'PASSED ✓' : 'NEEDS IMPROVEMENT'}
-            </div>
-            <button
-              onClick={() => { setSubmitted(false); setExerciseActive(false); }}
-              className="w-full py-3 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
-            >
-              Return to Class
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

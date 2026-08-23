@@ -13,6 +13,7 @@ import LiveExercise from '@/components/live-class/LiveExercise';
 import LiveClassSettingsModal from '@/components/live-class/LiveClassSettingsModal';
 import RNPPhysicalClassPresenterModal from '@/components/live-class/RNPPhysicalClassPresenterModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { fetchStudents, fetchQuestions, updateLiveClassStatus } from '@/lib/db';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useLiveChat } from '@/hooks/useLiveChat';
@@ -84,8 +85,31 @@ export default function LiveClassRoom() {
   const navigate = useNavigate();
   const { id: classId } = useParams<{ id: string }>();
   const passedState = location.state as { title?: string; className?: string; code?: string } | null;
-  const sessionTitle = passedState?.title || 'Rwanda Driving Code - Live Theory Class';
-  const sessionClass = passedState?.className || 'Class Category: Category B';
+  const [sessionDetails, setSessionDetails] = useState<{ title: string; code: string; category: string }>({
+    title: passedState?.title || 'Rwanda Driving Code - Live Theory Class',
+    code: passedState?.code || classId || '',
+    category: passedState?.className || 'Class Category: Category B',
+  });
+
+  useEffect(() => {
+    async function loadClassInfo() {
+      if (!classId) return;
+      const { data } = await supabase
+        .from('live_classes')
+        .select('title, access_code, class_type, license_category')
+        .or(`id.eq.${classId},access_code.eq.${classId}`)
+        .maybeSingle();
+
+      if (data) {
+        setSessionDetails(prev => ({
+          title: data.title || prev.title,
+          code: data.access_code || prev.code,
+          category: data.license_category ? `Category ${data.license_category}` : prev.category,
+        }));
+      }
+    }
+    void loadClassInfo();
+  }, [classId]);
 
   const { profile } = useAuth();
 
@@ -267,7 +291,7 @@ export default function LiveClassRoom() {
   const [saveTestResults, setSaveTestResults] = useState(true);
   const [ending, setEnding] = useState(false);
 
-  const sessionCode = useMemo(() => passedState?.code || 'DRC-' + Math.random().toString(36).slice(2, 8).toUpperCase(), [passedState?.code]);
+  const sessionCode = useMemo(() => sessionDetails.code || passedState?.code || classId || 'LC-ROOM', [sessionDetails.code, passedState?.code, classId]);
 
   // Timer
   useEffect(() => {
@@ -352,12 +376,12 @@ export default function LiveClassRoom() {
           <div className="w-px h-5 bg-white/10" />
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-white font-bold text-sm truncate max-w-[180px] sm:max-w-md">{sessionTitle}</h2>
+              <h2 className="text-white font-bold text-sm truncate max-w-[180px] sm:max-w-md">{sessionDetails.title}</h2>
               <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-extrabold tracking-wide">
                 <Radio size={10} className="animate-pulse" /> LIVE
               </span>
             </div>
-            {sessionClass && <p className="text-slate-400 text-xs">{sessionClass}</p>}
+            {sessionDetails.category && <p className="text-slate-400 text-xs">{sessionDetails.category}</p>}
           </div>
         </div>
 

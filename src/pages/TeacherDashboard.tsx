@@ -509,7 +509,7 @@ export default function TeacherDashboard() {
               </span>
               <span className="text-xs text-slate-400 font-medium">Friday, Aug 7, 2026</span>
             </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Welcome Back, Teacher Eric Mugisha! 👋</h1>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Welcome Back, {profile?.full_name || 'Instructor'}! 👋</h1>
             <p className="text-xs text-slate-500 mt-0.5">
               Assigned School: <strong className="text-slate-800">Kigali International Driving Academy</strong> • Senior Category B & Theory Instructor
             </p>

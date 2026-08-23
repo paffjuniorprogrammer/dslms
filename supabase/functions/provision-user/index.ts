@@ -239,8 +239,15 @@ Deno.serve(async (request) => {
       return Response.json({ error: createError?.message ?? 'Could not create the account.' }, { status: 200, headers: corsHeaders });
     }
 
-    // Ensure profiles row has must_change_password set
-    await adminClient.from('profiles').update({ must_change_password: isGeneratedPass }).eq('id', created.user.id);
+    // Ensure profiles row has full_name, role, school_id, phone, and must_change_password set
+    await adminClient.from('profiles').update({
+      full_name: fullName,
+      role: role,
+      school_id: schoolId,
+      phone: payload.phone?.trim() || null,
+      must_change_password: isGeneratedPass,
+      is_active: true,
+    }).eq('id', created.user.id);
 
     if (payload.type === 'teacher') {
       const { error } = await adminClient.from('teachers').insert({

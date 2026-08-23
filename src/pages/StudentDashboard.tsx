@@ -5,8 +5,10 @@ import {
   Clock, CheckCircle, ChevronRight
 } from 'lucide-react';
 import StatCard from '@/components/ui/StatCard';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function StudentDashboard() {
+  const { profile } = useAuth();
   const schoolInfo = {
     name: 'Kigali International Driving Academy',
     logo: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&w=120&q=80',
@@ -17,14 +19,14 @@ export default function StudentDashboard() {
     director: 'Director Jean Paul Nshimiye',
     accreditation: 'NLA/RDA-CERT/2024/0942',
     registeredCategory: 'Category B (Private Car & SUV)',
-    enrollmentDate: 'Jan 10, 2026',
+    enrollmentDate: 'Active',
     status: 'Active Student'
   };
 
   const upcomingClasses = [
-    { id: '1', title: 'Priority & Right of Way Rules', type: 'Live Class', code: 'LIVE-7049', time: 'Today, 2:00 PM', instructor: 'Teacher Eric Mugisha', status: 'live_now' },
-    { id: '2', title: 'Traffic Signs & Road Markings Exam', type: 'Physical Exam', code: 'PHYS-8842', time: 'Tomorrow, 10:00 AM', instructor: 'Teacher Chantal Akimana', status: 'upcoming' },
-    { id: '3', title: 'Speed Limits & Highway Overtaking', type: 'Live Class', code: 'LIVE-9102', time: 'Friday, 4:00 PM', instructor: 'Teacher Eric Mugisha', status: 'upcoming' },
+    { id: '1', title: 'Priority & Right of Way Rules', type: 'Live Class', code: 'LIVE-7049', time: 'Today, 2:00 PM', instructor: 'Instructor', status: 'live_now' },
+    { id: '2', title: 'Traffic Signs & Road Markings Exam', type: 'Physical Exam', code: 'PHYS-8842', time: 'Tomorrow, 10:00 AM', instructor: 'Instructor', status: 'upcoming' },
+    { id: '3', title: 'Speed Limits & Highway Overtaking', type: 'Live Class', code: 'LIVE-9102', time: 'Friday, 4:00 PM', instructor: 'Instructor', status: 'upcoming' },
   ];
 
   const recentScores = [
@@ -40,9 +42,9 @@ export default function StudentDashboard() {
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-semibold mb-3 border border-blue-400/20">
-              <GraduationCap size={14} /> Student Portal • Reg No: STU-2026-089
+              <GraduationCap size={14} /> Student Portal • Reg No: {profile?.public_id || 'STU-001'}
             </div>
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Welcome back, Uwase Aline!</h1>
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Welcome back, {profile?.full_name || 'Student'}!</h1>
             <p className="text-slate-300 text-sm mt-1 max-w-xl">
               You are enrolled in <strong className="text-white">{schoolInfo.registeredCategory}</strong> at {schoolInfo.name}. Keep practicing to pass your national driver test!
             </p>

@@ -59,17 +59,8 @@ export default function StudentClassesPage() {
     }
 
     // Check Live Class Codes
-    if (cleanCode.includes('LIVE') || cleanCode === '12A' || cleanCode === 'LIVE-901' || cleanCode === 'LIVE-7049') {
-      setActiveLiveClass({
-        id: 'LC-7049',
-        title: 'Priority & Right of Way Masterclass',
-        instructor: 'Teacher Eric Mugisha',
-        code: cleanCode
-      });
-      setActiveNotification({
-        type: 'success',
-        message: `Joined Live Class via Code: ${cleanCode}`
-      });
+    if (cleanCode.startsWith('LC-') || cleanCode.startsWith('LIVE-') || cleanCode.length >= 4) {
+      window.location.href = `/student?code=${cleanCode}`;
       return;
     }
 

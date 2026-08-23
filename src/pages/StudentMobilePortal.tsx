@@ -12,6 +12,7 @@ import {
 import { defaultTheoryQuestionBank, type ExerciseQuestion } from '@/data/rnpQuestions';
 import { useI18n } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import StudentLiveRoom from '@/components/live-class/StudentLiveRoom';
 
 // Interfaces for Student Portal
@@ -27,6 +28,7 @@ interface NotificationItem {
 export default function StudentMobilePortal() {
   const { language, setLanguage } = useI18n();
   const [searchParams] = useSearchParams();
+  const { profile, session: authSession } = useAuth();
 
   // Bottom Navigation Active Tab
   const [activeTab, setActiveTab] = useState<'dashboard' | 'classes' | 'profile'>('dashboard');
@@ -41,7 +43,7 @@ export default function StudentMobilePortal() {
   // Notifications Drawer State
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([
-    { id: '1', title: '💻 Live Stream Started', message: 'Teacher Eric Mugisha started Priority Signs Masterclass.', time: '10 mins ago', type: 'live', unread: true },
+    { id: '1', title: '💻 Live Stream Started', message: 'Driving Theory Masterclass is currently live.', time: '10 mins ago', type: 'live', unread: true },
     { id: '2', title: '📝 New Exam Available', message: 'National Provisional Theory Exam Bank A is now open.', time: '1 hour ago', type: 'exam', unread: true },
     { id: '3', title: '🏫 Physical Classroom Session', message: 'Room 2B is open for Traffic Signs Lab Workshop.', time: '2 hours ago', type: 'physical', unread: true },
     { id: '4', title: '💬 Teacher Announcement', message: 'Please review Article 42 on Right of Way before class.', time: 'Yesterday', type: 'announcement', unread: false },
@@ -54,26 +56,60 @@ export default function StudentMobilePortal() {
     showToast('All notifications marked as read');
   };
 
-  // Student Data Profile
-  const [studentInfo] = useState({
-    name: 'Uwase Aline',
-    studentId: 'STU-2026-089',
-    schoolName: 'Kigali International Driving Academy',
+  // Real Dynamic Student Data Profile
+  const [studentInfo, setStudentInfo] = useState({
+    name: profile?.full_name || 'Student',
+    studentId: profile?.public_id || 'STU-001',
+    schoolName: 'National Driving Academy',
     photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
-    phone: '+250 788 123 456',
-    email: 'uwase.aline@gmail.com',
+    phone: profile?.phone || '+250 788 000 000',
+    email: authSession?.user?.email || '',
     courseName: 'Category B - Private Car & SUV',
-    instructorName: 'Teacher Eric Mugisha',
-    enrollmentDate: 'Jan 10, 2026',
+    instructorName: 'Instructor',
+    enrollmentDate: 'Active',
     courseExpiry: 'Dec 31, 2026',
-    avgScore: 90.5,
-    attendanceRate: 96.5,
-    certificatesCount: 1,
+    avgScore: 85.0,
+    attendanceRate: 95.0,
+    certificatesCount: 0,
     schoolLogo: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&w=120&q=80',
-    address: 'Kigali City, Nyarugenge KN 5 Rd',
-    website: 'www.kigalidriving.rw',
+    address: 'Kigali, Rwanda',
+    website: 'www.drivingschool.rw',
     status: 'Active Student'
   });
+
+  useEffect(() => {
+    async function loadStudentDB() {
+      if (!profile) return;
+      const { data: studentRow } = await supabase
+        .from('students')
+        .select('*, schools(*)')
+        .eq('profile_id', profile.id)
+        .maybeSingle();
+
+      if (studentRow) {
+        setStudentInfo(prev => ({
+          ...prev,
+          name: studentRow.full_name || profile.full_name || prev.name,
+          studentId: profile.public_id || studentRow.id.slice(0, 8).toUpperCase(),
+          schoolName: studentRow.schools?.name || prev.schoolName,
+          phone: studentRow.phone || profile.phone || prev.phone,
+          email: studentRow.email || authSession?.user?.email || prev.email,
+          courseName: studentRow.license_category ? `Category ${studentRow.license_category} Theory Course` : prev.courseName,
+          status: studentRow.status === 'completed' ? 'Certified Graduate' : 'Active Student',
+          enrollmentDate: studentRow.enrollment_date || prev.enrollmentDate,
+        }));
+      } else if (profile.full_name) {
+        setStudentInfo(prev => ({
+          ...prev,
+          name: profile.full_name,
+          studentId: profile.public_id || prev.studentId,
+          email: authSession?.user?.email || prev.email,
+          phone: profile.phone || prev.phone,
+        }));
+      }
+    }
+    void loadStudentDB();
+  }, [profile, authSession?.user?.email]);
 
   // Access Code State
   const [accessCode, setAccessCode] = useState('');
@@ -271,8 +307,11 @@ export default function StudentMobilePortal() {
     return () => clearInterval(interval);
   }, [activeJoinedView, physFinished, physDbQuestions.length, handleSubmitPhysicalTest]);
 
+  const [activeSessionId, setActiveSessionId] = useState<string>('');
+  const [activeInstructorName, setActiveInstructorName] = useState<string>('Instructor');
+
   // Code Validation Handler
-  const handleValidateCode = useCallback((inputCode: string) => {
+  const handleValidateCode = useCallback(async (inputCode: string) => {
     const codeClean = inputCode.trim().toUpperCase();
     setCodeError(null);
 
@@ -281,8 +320,22 @@ export default function StudentMobilePortal() {
       return;
     }
 
-    if (codeClean.startsWith('LC-') || codeClean.startsWith('LIVE-') || codeClean === 'LIVE-7049') {
-      setJoinedActivityTitle(`Live Online Class (${codeClean})`);
+    if (codeClean.startsWith('LC-') || codeClean.startsWith('LIVE-') || codeClean.length >= 4) {
+      // Look up session in Supabase database so student connects to exact same room ID
+      const { data: session } = await supabase
+        .from('live_classes')
+        .select('id, title, access_code, teacher_id, schools(name), teachers(full_name)')
+        .or(`access_code.eq.${codeClean},id.eq.${codeClean}`)
+        .maybeSingle();
+
+      const resolvedId = session?.id || codeClean;
+      const resolvedTitle = session?.title || `Live Online Class (${codeClean})`;
+      const teacherObj = session?.teachers as any;
+      const resolvedTeacher = (Array.isArray(teacherObj) ? teacherObj[0]?.full_name : teacherObj?.full_name) || studentInfo.instructorName || 'Instructor';
+
+      setActiveSessionId(resolvedId);
+      setActiveInstructorName(resolvedTeacher);
+      setJoinedActivityTitle(resolvedTitle);
       setActiveJoinedView('online_class');
       showToast(`Joined Live Online Class: ${codeClean}`);
       return;
@@ -981,12 +1034,12 @@ export default function StudentMobilePortal() {
         {/* REAL LIVE CLASSROOM OVERLAY */}
         {activeJoinedView === 'online_class' && (
           <StudentLiveRoom
-            classId={accessCode || 'LIVE-ROOM'}
+            classId={activeSessionId || accessCode || 'LIVE-ROOM'}
             classTitle={joinedActivityTitle || 'Online Driving Theory Class'}
-            instructorName={studentInfo.instructorName || 'Teacher Eric Mugisha'}
+            instructorName={activeInstructorName || studentInfo.instructorName || 'Instructor'}
             accessCode={accessCode || 'LIVE-CODE'}
-            studentId={studentInfo.studentId}
-            studentName={studentInfo.name}
+            studentId={profile?.id || studentInfo.studentId}
+            studentName={profile?.full_name || studentInfo.name}
             onLeave={() => {
               setActiveJoinedView('none');
               showToast('Left live class');
