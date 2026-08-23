@@ -1,0 +1,6 @@
+{
+  "name": "Live Class & School Management System",
+  "description": "Virtual classroom portal with live video, mic controls, screen sharing, real-time student exercise scoring, and answer review broadcasting.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
