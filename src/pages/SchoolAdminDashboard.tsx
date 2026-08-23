@@ -262,10 +262,16 @@ export default function SchoolAdminDashboard() {
 
   const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStudentName.trim() || !newStudentNin.trim() || !newStudentEmail.trim() || !newStudentPassword.trim()) return;
+    if (!newStudentName.trim() || !newStudentNin.trim() || !newStudentEmail.trim()) return;
     setProvisioning(true);
     const { data, error } = await supabase.functions.invoke('provision-user', {
-      body: { type: 'student', fullName: newStudentName.trim(), email: newStudentEmail.trim(), password: newStudentPassword, phone: newStudentPhone.trim(), licenseCategory: newStudentCategory },
+      body: {
+        type: 'student',
+        fullName: newStudentName.trim(),
+        email: newStudentEmail.trim(),
+        phone: newStudentPhone.trim() || null,
+        licenseCategory: newStudentCategory,
+      },
     });
     setProvisioning(false);
     if (error || data?.error) { triggerToast(data?.error || error?.message || 'Could not create student account.'); return; }
@@ -298,7 +304,29 @@ export default function SchoolAdminDashboard() {
     setNewStudentPhone('');
     setNewStudentEmail('');
     setNewStudentPassword('');
-    triggerToast(`🎓 Student ${newSt.name} enrolled under ${newSt.id}`);
+    if (data.temporaryPassword) {
+      setNewTeacherAccount({ email: newStudentEmail.trim(), password: data.temporaryPassword });
+    }
+    triggerToast(`🎓 Student ${newSt.name} enrolled with temporary password!`);
+  };
+
+  const handleResetStudentPassword = async (email: string) => {
+    setProvisioning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('provision-user', {
+        body: { action: 'reset_password', type: 'student', email },
+      });
+      if (error || data?.error) {
+        triggerToast(`⚠️ Password reset failed: ${data?.error || error?.message}`);
+        return;
+      }
+      setNewTeacherAccount({ email, password: data.temporaryPassword });
+      triggerToast(`🔑 Temporary password for ${email} reset to ${data.temporaryPassword}`);
+    } catch (err: any) {
+      triggerToast(`⚠️ Password reset failed: ${err.message}`);
+    } finally {
+      setProvisioning(false);
+    }
   };
 
   const handleGenerateExamCode = () => {
@@ -1132,6 +1160,33 @@ export default function SchoolAdminDashboard() {
                   <option value="Category C (Truck)">Category C (Truck)</option>
                   <option value="Category D (Bus)">Category D (Bus)</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Student Email Address *</label>
+                <input
+                  type="email"
+                  required
+                  value={newStudentEmail}
+                  onChange={e => setNewStudentEmail(e.target.value)}
+                  placeholder="student@example.rw"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Student Phone Number</label>
+                <input
+                  type="text"
+                  value={newStudentPhone}
+                  onChange={e => setNewStudentPhone(e.target.value)}
+                  placeholder="+250 788 123 456"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                />
+              </div>
+
+              <div className="p-3 bg-blue-50 rounded-xl border border-blue-200/60 text-[11px] text-blue-900">
+                A temporary password will be automatically generated and displayed upon enrollment.
               </div>
 
               <div className="flex gap-2 pt-2">

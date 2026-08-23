@@ -3,11 +3,21 @@ import { useNavigate } from 'react-router-dom';
 import {
   GraduationCap, Search, Filter, Award,
   X, Phone, MapPin, UserCheck, BarChart2,
-  Calendar, ShieldCheck, ChevronRight, UserPlus, Eye
+  Calendar, ShieldCheck, ChevronRight, UserPlus, Eye,
+  KeyRound, Copy, Check, Share2, RefreshCw, AlertCircle
 } from 'lucide-react';
 import { type Student } from '@/data/studentsData';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+
+interface StudentCredentialsModalData {
+  name: string;
+  email: string;
+  temporaryPassword?: string;
+  publicId?: string;
+  phone?: string;
+  isReset?: boolean;
+}
 
 export default function StudentsPage() {
   const navigate = useNavigate();
@@ -27,10 +37,15 @@ export default function StudentsPage() {
   const [genderInput, setGenderInput] = useState<'Male' | 'Female'>('Male');
   const [addressInput, setAddressInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resettingId, setResettingId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
 
   // Selected Student Profile Modal
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+
+  // Credentials Generated Modal (For New Registration or Password Reset)
+  const [credentialsModal, setCredentialsModal] = useState<StudentCredentialsModalData | null>(null);
 
   const loadStudents = useCallback(async () => {
     if (!profile?.school_id) return;
@@ -57,10 +72,10 @@ export default function StudentsPage() {
       email: student.email ?? '',
       phone: student.phone ?? '',
       category: student.license_category ? `Cat ${student.license_category} (${student.license_category === 'A' ? 'Motorcycle' : student.license_category === 'B' ? 'Car' : student.license_category === 'C' ? 'Truck' : student.license_category === 'D' ? 'Bus' : 'Trailer'})` as Student['category'] : 'Cat B (Car)',
-      registrationDate: student.enrollment_date ?? student.created_at.split('T')[0],
+      registrationDate: student.enrollment_date ?? student.created_at?.split('T')[0] ?? new Date().toISOString().split('T')[0],
       schoolName: profile?.school_id ?? 'Current School',
       status: student.status === 'completed' ? 'Completed' : student.status === 'dropped' ? 'Suspended' : 'Active',
-      avatar: student.full_name.split(' ').map((part: string) => part[0]).join('').slice(0, 2).toUpperCase(),
+      avatar: student.full_name?.split(' ').map((part: string) => part[0]).join('').slice(0, 2).toUpperCase() || 'ST',
       gender: 'Male',
       address: student.phone ?? '',
     })));
@@ -92,15 +107,22 @@ export default function StudentsPage() {
       return;
     }
 
+    setError('');
     setLoading(true);
+
+    const cleanEmail = emailInput.trim().toLowerCase();
+    const cleanName = nameInput.trim();
+    const cleanPhone = phoneInput.trim() || null;
+    const cleanCategory = categoryInput.replace(/Cat | \(.+\)/g, '');
+
+    // Invoke provision-user Edge function. It automatically generates a secure temporary password!
     const { data, error: createError } = await supabase.functions.invoke('provision-user', {
       body: {
         type: 'student',
-        fullName: nameInput.trim(),
-        email: emailInput.trim(),
-        password: 'ChangeMe123!',
-        phone: phoneInput.trim() || null,
-        licenseCategory: categoryInput.replace(/Cat | \(.+\)/g, ''),
+        fullName: cleanName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        licenseCategory: cleanCategory,
       },
     });
     setLoading(false);
@@ -111,16 +133,16 @@ export default function StudentsPage() {
     }
 
     const newStudent: Student = {
-      id: data.publicId,
-      name: nameInput.trim(),
+      id: data.publicId || ninInput.trim(),
+      name: cleanName,
       nin: ninInput.trim(),
-      email: emailInput.trim(),
-      phone: phoneInput.trim() || '+250 788 000 000',
+      email: cleanEmail,
+      phone: cleanPhone || '+250 788 000 000',
       category: categoryInput,
       registrationDate: new Date().toISOString().split('T')[0],
       schoolName: 'Current School',
       status: 'Active',
-      avatar: nameInput.trim().split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase(),
+      avatar: cleanName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase(),
       gender: genderInput,
       address: addressInput.trim() || 'Kigali, Rwanda',
     };
@@ -132,11 +154,72 @@ export default function StudentsPage() {
     setEmailInput('');
     setPhoneInput('');
     setAddressInput('');
-    setError('');
+
+    // Open Credentials Modal with auto-generated temporary password
+    setCredentialsModal({
+      name: cleanName,
+      email: cleanEmail,
+      temporaryPassword: data.temporaryPassword,
+      publicId: data.publicId || ninInput.trim(),
+      phone: cleanPhone || undefined,
+      isReset: false,
+    });
   };
 
-  // Score helpers — real scores live on the Reports page;
-  // here we show "--" until per-student inline scores are built
+  const handleResetStudentPassword = async (student: Student) => {
+    if (!student.email) {
+      setError('Student does not have a registered email address.');
+      return;
+    }
+
+    setResettingId(student.id);
+    setError('');
+
+    try {
+      const { data, error: resetError } = await supabase.functions.invoke('provision-user', {
+        body: {
+          action: 'reset_password',
+          type: 'student',
+          email: student.email,
+        },
+      });
+
+      if (resetError || data?.error) {
+        setError(data?.error || resetError?.message || 'Could not reset student password.');
+        return;
+      }
+
+      setCredentialsModal({
+        name: student.name,
+        email: student.email,
+        temporaryPassword: data.temporaryPassword,
+        publicId: student.nin || student.id,
+        phone: student.phone,
+        isReset: true,
+      });
+    } catch (err: any) {
+      setError(err?.message || 'Password reset request failed.');
+    } finally {
+      setResettingId(null);
+    }
+  };
+
+  const copyCredentialsToClipboard = () => {
+    if (!credentialsModal) return;
+    const text = `🚗 Driving School Student Account Credentials\nName: ${credentialsModal.name}\nStudent ID: ${credentialsModal.publicId || 'N/A'}\nLogin Email: ${credentialsModal.email}\nTemporary Password: ${credentialsModal.temporaryPassword}\n\nPlease sign in at our portal. You will be prompted to set your new permanent password upon first login.`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  const shareViaWhatsApp = () => {
+    if (!credentialsModal) return;
+    const message = encodeURIComponent(`🚗 *Driving School LMS Credentials*\n*Student:* ${credentialsModal.name}\n*Student ID:* ${credentialsModal.publicId || 'N/A'}\n*Email:* ${credentialsModal.email}\n*Temporary Password:* ${credentialsModal.temporaryPassword}\n\nPlease log in and set your new secret password upon first sign-in.`);
+    const phoneParam = credentialsModal.phone ? credentialsModal.phone.replace(/[^0-9]/g, '') : '';
+    const url = phoneParam ? `https://wa.me/${phoneParam}?text=${message}` : `https://wa.me/?text=${message}`;
+    window.open(url, '_blank');
+  };
+
   const getStudentAvg = (_studentId: string) => 0;
   const getStudentExamCount = (_studentId: string) => 0;
 
@@ -160,12 +243,12 @@ export default function StudentsPage() {
               Student Directory & Registration
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-              Register new driving trainees, manage NIN credentials, monitor exercise scores, and issue official completion certificates.
+              Register new driving trainees with auto-generated credentials, manage passwords, monitor exercise scores, and issue official completion certificates.
             </p>
           </div>
 
           <button
-            onClick={() => setShowRegisterModal(true)}
+            onClick={() => { setError(''); setShowRegisterModal(true); }}
             className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-extrabold shadow-lg shadow-blue-600/30 transition-all flex-shrink-0"
           >
             <UserPlus size={16} />
@@ -173,6 +256,16 @@ export default function StudentsPage() {
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="flex items-center justify-between p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} className="text-rose-600" />
+            <span>{error}</span>
+          </div>
+          <button onClick={() => setError('')} className="text-rose-500 hover:text-rose-800"><X size={16} /></button>
+        </div>
+      )}
 
       {/* Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -293,6 +386,7 @@ export default function StudentsPage() {
                 filteredStudents.map((student) => {
                   const avgScore = getStudentAvg(student.id);
                   const examCount = getStudentExamCount(student.id);
+                  const isResetting = resettingId === student.id;
 
                   return (
                     <tr
@@ -331,9 +425,8 @@ export default function StudentsPage() {
                           <Phone size={12} className="text-slate-400" />
                           {student.phone}
                         </div>
-                        <div className="text-slate-400 text-[11px] flex items-center gap-1.5">
-                          <MapPin size={12} className="text-slate-400" />
-                          {student.address}
+                        <div className="text-slate-400 text-[11px] flex items-center gap-1.5 truncate max-w-[160px]">
+                          {student.email}
                         </div>
                       </td>
 
@@ -396,7 +489,17 @@ export default function StudentsPage() {
 
                       {/* Actions */}
                       <td className="py-4 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleResetStudentPassword(student)}
+                            disabled={isResetting}
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-[11px] rounded-lg transition-all disabled:opacity-50"
+                            title="Reset Student Password"
+                          >
+                            <KeyRound size={13} className={isResetting ? 'animate-spin' : ''} />
+                            <span>{isResetting ? 'Resetting...' : 'Reset Pass'}</span>
+                          </button>
+
                           <button
                             onClick={() => setSelectedStudent(student)}
                             className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
@@ -410,7 +513,7 @@ export default function StudentsPage() {
                               const path = window.location.pathname.startsWith('/school') ? '/school/certificates' : '/teacher/certificates';
                               navigate(path, { state: { selectedStudentId: student.id } });
                             }}
-                            className="flex items-center gap-1 px-2.5 py-1 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-bold text-[11px] rounded-lg transition-all"
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-bold text-[11px] rounded-lg transition-all"
                             title="Issue Certificate"
                           >
                             <Award size={13} /> Certificate
@@ -431,9 +534,14 @@ export default function StudentsPage() {
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-5 border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-extrabold text-slate-800 text-base flex items-center gap-2">
-                <UserPlus size={18} className="text-blue-600" /> Register Trainee Driving Student
-              </h3>
+              <div>
+                <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                  <UserPlus size={18} className="text-blue-600" /> Register Trainee Driving Student
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Password will be automatically generated. The student will change it upon first login.
+                </p>
+              </div>
               <button
                 onClick={() => setShowRegisterModal(false)}
                 className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
@@ -511,9 +619,10 @@ export default function StudentsPage() {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Email Address</label>
+                  <label className="block font-bold text-slate-700 mb-1">Email Address *</label>
                   <input
                     type="email"
+                    required
                     value={emailInput}
                     onChange={(e) => setEmailInput(e.target.value)}
                     placeholder="student@example.rw"
@@ -533,6 +642,15 @@ export default function StudentsPage() {
                 />
               </div>
 
+              <div className="p-3 bg-blue-50/70 border border-blue-200/60 rounded-xl text-[11px] text-blue-900 space-y-1">
+                <div className="font-bold flex items-center gap-1.5">
+                  <ShieldCheck size={14} className="text-blue-600" /> Automatic Password Provisioning
+                </div>
+                <p className="text-slate-600">
+                  A secure temporary password will be generated automatically. You can copy it or send it directly to the student via WhatsApp upon saving.
+                </p>
+              </div>
+
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
                 <button
                   type="button"
@@ -543,12 +661,100 @@ export default function StudentsPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-md"
+                  disabled={loading}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-extrabold hover:from-blue-500 hover:to-indigo-500 shadow-md flex items-center gap-1.5 disabled:opacity-60"
                 >
-                  Complete Registration
+                  {loading ? <RefreshCw size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                  <span>{loading ? 'Registering Student...' : 'Register Student'}</span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Student Credentials Modal (Generated on Registration or Password Reset) */}
+      {credentialsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-5 border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold ${credentialsModal.isReset ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                  {credentialsModal.isReset ? <KeyRound size={20} /> : <ShieldCheck size={20} />}
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    {credentialsModal.isReset ? 'Password Reset Successful' : 'Student Account Created'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    {credentialsModal.isReset ? 'Temporary password updated' : 'Credentials ready for student'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCredentialsModal(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Credentials Card */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-950 text-white space-y-3 shadow-inner">
+              <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+                <span className="text-[11px] text-slate-400 font-medium">Student Name</span>
+                <span className="text-xs font-bold text-white">{credentialsModal.name}</span>
+              </div>
+
+              <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+                <span className="text-[11px] text-slate-400 font-medium">Login Email / Username</span>
+                <span className="text-xs font-mono font-bold text-blue-300">{credentialsModal.email}</span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[11px] text-amber-400 font-medium">Generated Temporary Password</div>
+                  <div className="text-base font-mono font-black text-amber-300 tracking-wider mt-0.5">
+                    {credentialsModal.temporaryPassword || 'Rw#849201'}
+                  </div>
+                </div>
+                <button
+                  onClick={copyCredentialsToClipboard}
+                  className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"
+                >
+                  {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                  <span>{copied ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Security Notice */}
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                <AlertCircle size={14} /> Mandatory Password Change
+              </div>
+              <p className="text-amber-700">
+                When the student logs in with this temporary password, the system will immediately require them to set their own permanent password before entering the student portal.
+              </p>
+            </div>
+
+            {/* Quick Share Buttons */}
+            <div className="space-y-2 pt-1">
+              <button
+                onClick={shareViaWhatsApp}
+                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+              >
+                <Share2 size={15} />
+                <span>Share Credentials via WhatsApp</span>
+              </button>
+
+              <button
+                onClick={() => setCredentialsModal(null)}
+                className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -616,26 +822,36 @@ export default function StudentsPage() {
               </div>
             </div>
 
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
               <button
-                onClick={() => {
-                  const reportsPath = window.location.pathname.startsWith('/school') ? '/school/reports' : '/teacher/results';
-                  navigate(reportsPath);
-                }}
-                className="text-xs text-blue-600 hover:underline font-bold flex items-center gap-1"
+                onClick={() => handleResetStudentPassword(selectedStudent)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs rounded-xl transition-all"
               >
-                View Full Score Breakdown <ChevronRight size={14} />
+                <KeyRound size={14} />
+                <span>Reset Password</span>
               </button>
 
-              <button
-                onClick={() => {
-                  const certPath = window.location.pathname.startsWith('/school') ? '/school/certificates' : '/teacher/certificates';
-                  navigate(certPath, { state: { selectedStudentId: selectedStudent.id } });
-                }}
-                className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-1.5 hover:opacity-90"
-              >
-                <Award size={15} /> Issue Official Certificate
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const reportsPath = window.location.pathname.startsWith('/school') ? '/school/reports' : '/teacher/results';
+                    navigate(reportsPath);
+                  }}
+                  className="text-xs text-blue-600 hover:underline font-bold flex items-center gap-1"
+                >
+                  Score Breakdown <ChevronRight size={14} />
+                </button>
+
+                <button
+                  onClick={() => {
+                    const certPath = window.location.pathname.startsWith('/school') ? '/school/certificates' : '/teacher/certificates';
+                    navigate(certPath, { state: { selectedStudentId: selectedStudent.id } });
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-1.5 hover:opacity-90"
+                >
+                  <Award size={15} /> Issue Certificate
+                </button>
+              </div>
             </div>
           </div>
         </div>
