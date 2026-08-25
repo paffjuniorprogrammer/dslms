@@ -6,8 +6,7 @@
  * presence data so the UI has a single source of truth for the participant list.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useCallback, useEffect, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { Participant, MediaState, ParticipantRole } from '@/types/live-class';
 import type { RemotePeerState } from './useWebRTC';
@@ -98,7 +97,7 @@ export function useLivePresence({
   // ─── Listen for host governance commands (students) ────────────────────────
 
   useEffect(() => {
-    if (!classId || !localPeerId || localRole === 'host') return;
+    if (!classId || !localPeerId || localRole !== 'student') return;
 
     // These events are received by students; use the shared channel
     const ch = channelRef.current;

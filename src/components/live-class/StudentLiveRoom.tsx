@@ -12,7 +12,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   X, Send, Hand, Mic, MicOff, Camera, CameraOff,
-  Radio, Users, MessageCircle, ClipboardList, CheckCircle2, ChevronDown, ChevronUp
+  Radio, Users, MessageCircle, ClipboardList, CheckCircle2
 } from 'lucide-react';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useLiveChat } from '@/hooks/useLiveChat';
@@ -54,6 +54,7 @@ export default function StudentLiveRoom({
     toggleHand,
     broadcastEvent,
     channelRef,
+    channel,
   } = useWebRTC({
     classId,
     localPeerId: studentId,
@@ -69,7 +70,7 @@ export default function StudentLiveRoom({
     senderId: studentId,
     senderName: studentName,
     senderRole: 'student',
-    channel: channelRef.current,
+    channel,
   });
 
   // ─── Find host / teacher stream ───────────────────────────────────────────
@@ -124,6 +125,14 @@ export default function StudentLiveRoom({
       if (payload.target === studentId && micState === 'on') toggleMic();
     });
 
+    ch.on('broadcast', { event: 'disable_participant_camera' }, ({ payload }) => {
+      if (payload.target === studentId && cameraState === 'on') toggleCamera();
+    });
+
+    ch.on('broadcast', { event: 'disable_all_cameras' }, () => {
+      if (cameraState === 'on') toggleCamera();
+    });
+
     ch.on('broadcast', { event: 'remove_participant' }, ({ payload }) => {
       if (payload.target === studentId) {
         alert('You have been removed from this class by the teacher.');
@@ -134,7 +143,7 @@ export default function StudentLiveRoom({
     ch.on('broadcast', { event: 'lower_hand' }, ({ payload }) => {
       if (payload.target === studentId && localHandRaised) toggleHand();
     });
-  }, [channelRef, micState, studentId, toggleMic, toggleHand, localHandRaised, onLeave]);
+  }, [channel, channelRef, micState, cameraState, studentId, toggleMic, toggleCamera, toggleHand, localHandRaised, onLeave]);
 
   const handleSelectAnswer = (questionId: string, answer: string) => {
     setAnswers(prev => ({ ...prev, [questionId]: answer }));

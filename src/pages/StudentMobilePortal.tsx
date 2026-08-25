@@ -4,8 +4,7 @@ import {
   Video, BookOpen, Award, BarChart3,
   MapPin, Phone, Mail, User, ShieldCheck, ArrowRight,
   Clock, Bell, Lock, KeyRound,
-  Play, CheckCircle2, AlertCircle, X, Send,
-  Hand, Users, Mic, MicOff, Camera, CameraOff,
+  CheckCircle2, AlertCircle, X,
   Download, FileText, Building2,
   Calendar, Globe, Edit, CheckSquare, LogOut
 } from 'lucide-react';
@@ -118,19 +117,6 @@ export default function StudentMobilePortal() {
   // Active Joined Overlays
   const [activeJoinedView, setActiveJoinedView] = useState<'none' | 'online_class' | 'physical_class' | 'exam' | 'test'>('none');
   const [joinedActivityTitle, setJoinedActivityTitle] = useState('');
-
-  // Online Class Live Interactive State
-  const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState([
-    { id: '1', sender: 'Teacher Eric Mugisha', text: 'Welcome everyone! Today we master Priority Signs & Right of Way.', time: '09:00 AM', isTeacher: true },
-    { id: '2', sender: 'Uwase Aline (You)', text: 'Good morning teacher! Ready for the lesson.', time: '09:02 AM', isTeacher: false },
-    { id: '3', sender: 'Mugisha Divine', text: 'Teacher, will we review roundabouts?', time: '09:04 AM', isTeacher: false },
-    { id: '4', sender: 'Teacher Eric Mugisha', text: 'Yes Divine! Roundabout rules are in Chapter 3 on slide 12.', time: '09:05 AM', isTeacher: true },
-  ]);
-  const [handRaised, setHandRaised] = useState(false);
-  const [micActive, setMicActive] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [activeSlide, setActiveSlide] = useState(1);
 
   // Physical Classroom Test State (DB-driven)
   const [physSessionId, setPhysSessionId] = useState<string | null>(null);
@@ -320,27 +306,7 @@ export default function StudentMobilePortal() {
       return;
     }
 
-    if (codeClean.startsWith('LC-') || codeClean.startsWith('LIVE-') || codeClean.length >= 4) {
-      // Look up session in Supabase database so student connects to exact same room ID
-      const { data: session } = await supabase
-        .from('live_classes')
-        .select('id, title, access_code, teacher_id, schools(name), teachers(full_name)')
-        .or(`access_code.eq.${codeClean},id.eq.${codeClean}`)
-        .maybeSingle();
-
-      const resolvedId = session?.id || codeClean;
-      const resolvedTitle = session?.title || `Live Online Class (${codeClean})`;
-      const teacherObj = session?.teachers as any;
-      const resolvedTeacher = (Array.isArray(teacherObj) ? teacherObj[0]?.full_name : teacherObj?.full_name) || studentInfo.instructorName || 'Instructor';
-
-      setActiveSessionId(resolvedId);
-      setActiveInstructorName(resolvedTeacher);
-      setJoinedActivityTitle(resolvedTitle);
-      setActiveJoinedView('online_class');
-      showToast(`Joined Live Online Class: ${codeClean}`);
-      return;
-    }
-
+    // Physical, exam, and practice codes have their own workflows.
     if (codeClean.startsWith('PHYS-')) {
       void joinPhysicalClass(codeClean);
       return;
@@ -368,16 +334,48 @@ export default function StudentMobilePortal() {
       return;
     }
 
-    // Default fallback
-    if (codeClean.length >= 4) {
-      setJoinedActivityTitle(`Active Learning Session (${codeClean})`);
-      setActiveJoinedView('online_class');
-      showToast(`Joined Session: ${codeClean}`);
+    if (!codeClean.startsWith('LC-')) {
+      setCodeError('Invalid live-class access code. Please use the code provided by your teacher.');
       return;
     }
 
-    setCodeError('Invalid or expired access code. Please contact your teacher.');
-  }, [joinPhysicalClass]);
+    try {
+      // Resolve the shared room from the canonical access code. Never create
+      // a local fallback room because it would isolate the student from class.
+      const { data: session, error } = await supabase
+        .from('live_classes')
+        .select('id, title, access_code, status, class_type, teacher_id, schools(name), teachers(full_name)')
+        .eq('access_code', codeClean)
+        .eq('class_type', 'online')
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!session) {
+        setCodeError('This live class code was not found. Check the code and try again.');
+        return;
+      }
+      if (session.status === 'ended' || session.status === 'cancelled') {
+        setCodeError('This live class has already ended or was cancelled.');
+        return;
+      }
+      if (session.status !== 'live') {
+        setCodeError('This class has not started yet. Ask your teacher when to join.');
+        return;
+      }
+
+      const teacherObj = session.teachers as { full_name?: string } | Array<{ full_name?: string }> | null;
+      const resolvedTeacher = (Array.isArray(teacherObj) ? teacherObj[0]?.full_name : teacherObj?.full_name) || studentInfo.instructorName || 'Instructor';
+
+      setActiveSessionId(session.id);
+      setActiveInstructorName(resolvedTeacher);
+      setJoinedActivityTitle(session.title || `Live Online Class (${codeClean})`);
+      setActiveJoinedView('online_class');
+      showToast(`Joined Live Online Class: ${codeClean}`);
+    } catch (err) {
+      console.error('Error joining live class:', err);
+      setCodeError('Could not connect to the live class. Check your internet connection.');
+    }
+  }, [joinPhysicalClass, studentInfo.instructorName]);
 
   // Sync with searchParams if ?tab=classes or ?tab=profile
   useEffect(() => {
@@ -432,17 +430,6 @@ export default function StudentMobilePortal() {
   const handleFinishTest = () => {
     setTestFinished(true);
     showToast('Test Submitted successfully!');
-  };
-
-  // Send Chat Message
-  const handleSendChat = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
-    setChatMessages([
-      ...chatMessages,
-      { id: Date.now().toString(), sender: 'Uwase Aline (You)', text: chatInput, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isTeacher: false }
-    ]);
-    setChatInput('');
   };
 
   // Modals for Profile

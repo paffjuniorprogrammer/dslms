@@ -8,6 +8,7 @@
  */
 
 import { supabase } from './supabase';
+import type { ParticipantRole } from '@/types/live-class';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types returned by the helpers (DB shapes, not the legacy mock shapes)
@@ -477,7 +478,7 @@ export async function fetchLiveClassByCode(code: string): Promise<DBLiveClass | 
   const { data, error } = await supabase
     .from('live_classes')
     .select('*')
-    .eq('meeting_url', code)
+    .eq('access_code', code)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -682,6 +683,16 @@ export async function createExam(exam: Omit<DBExam, 'id' | 'created_at' | 'quest
  * Aggregate exam results per student for the Reports page.
  * Returns one row per student with score aggregations.
  */
+interface StudentReportRow {
+  student_id: string;
+  score: number;
+  completed_at: string | null;
+  students: {
+    full_name: string | null;
+    license_category: string | null;
+  } | null;
+}
+
 export async function fetchStudentReports(schoolId: string): Promise<StudentReport[]> {
   // Fetch all exam results for this school's exams
   const { data: results, error } = await supabase
@@ -712,7 +723,7 @@ export async function fetchStudentReports(schoolId: string): Promise<StudentRepo
     lastActive: string | null;
   }> = {};
 
-  for (const row of results as any[]) {
+  for (const row of results as unknown as StudentReportRow[]) {
     const sid = row.student_id as string;
     if (!byStudent[sid]) {
       byStudent[sid] = {
@@ -758,6 +769,21 @@ export async function fetchStudentReports(schoolId: string): Promise<StudentRepo
 // CERTIFICATES
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface CertificateJoinRow {
+  id: string;
+  school_id: string;
+  student_id: string;
+  exam_id: string | null;
+  certificate_number: string;
+  license_category: string;
+  issued_at: string;
+  status: 'issued' | 'revoked';
+  students: {
+    full_name: string | null;
+    email: string | null;
+  } | null;
+}
+
 export async function fetchCertificates(schoolId: string): Promise<DBCertificate[]> {
   const { data, error } = await supabase
     .from('certificates')
@@ -771,18 +797,21 @@ export async function fetchCertificates(schoolId: string): Promise<DBCertificate
 
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((c: any) => ({
-    id: c.id,
-    school_id: c.school_id,
-    student_id: c.student_id,
-    exam_id: c.exam_id,
-    certificate_number: c.certificate_number,
-    license_category: c.license_category,
-    issued_at: c.issued_at,
-    status: c.status,
-    student_name: c.students?.full_name ?? null,
-    student_email: c.students?.email ?? null,
-  })) as DBCertificate[];
+  return (data ?? []).map((c: unknown): DBCertificate => {
+    const row = c as CertificateJoinRow;
+    return {
+      id: row.id,
+      school_id: row.school_id,
+      student_id: row.student_id,
+      exam_id: row.exam_id,
+      certificate_number: row.certificate_number,
+      license_category: row.license_category,
+      issued_at: row.issued_at,
+      status: row.status,
+      student_name: row.students?.full_name ?? undefined,
+      student_email: row.students?.email ?? undefined,
+    };
+  });
 }
 
 export async function issueCertificate(payload: {
@@ -818,7 +847,7 @@ export interface DBLiveClassMessage {
   class_id: string;
   sender_id: string;
   sender_name: string;
-  sender_role: 'host' | 'student';
+  sender_role: ParticipantRole;
   message: string;
   pinned: boolean;
   created_at: string;
@@ -839,7 +868,7 @@ export async function sendLiveClassMessage(payload: {
   classId: string;
   senderId: string;
   senderName: string;
-  senderRole: 'host' | 'student';
+  senderRole: ParticipantRole;
   message: string;
   id?: string;
 }): Promise<DBLiveClassMessage> {

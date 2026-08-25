@@ -14,7 +14,7 @@ import LiveClassSettingsModal from '@/components/live-class/LiveClassSettingsMod
 import RNPPhysicalClassPresenterModal from '@/components/live-class/RNPPhysicalClassPresenterModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-import { fetchStudents, fetchQuestions, updateLiveClassStatus } from '@/lib/db';
+import { fetchQuestions, updateLiveClassStatus } from '@/lib/db';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useLiveChat } from '@/hooks/useLiveChat';
 import { useLivePresence } from '@/hooks/useLivePresence';
@@ -85,6 +85,7 @@ export default function LiveClassRoom() {
   const navigate = useNavigate();
   const { id: classId } = useParams<{ id: string }>();
   const passedState = location.state as { title?: string; className?: string; code?: string } | null;
+  const [sessionStatus, setSessionStatus] = useState<'scheduled' | 'live' | 'ended' | 'cancelled'>('live');
   const [sessionDetails, setSessionDetails] = useState<{ title: string; code: string; category: string }>({
     title: passedState?.title || 'Rwanda Driving Code - Live Theory Class',
     code: passedState?.code || classId || '',
@@ -123,6 +124,47 @@ export default function LiveClassRoom() {
     return 'teacher';
   }, [profile?.role]);
 
+  // Keep every room synchronized with the database-backed class lifecycle.
+  useEffect(() => {
+    if (!classId || classId === 'demo' || classId === 'new') return;
+
+    let mounted = true;
+    const loadStatus = async () => {
+      const { data, error } = await supabase
+        .from('live_classes')
+        .select('status')
+        .eq('id', classId)
+        .maybeSingle();
+      if (!error && data && mounted) {
+        setSessionStatus(data.status as 'scheduled' | 'live' | 'ended' | 'cancelled');
+      }
+    };
+
+    void loadStatus();
+
+    const statusChannel = supabase
+      .channel(`live_class_status:${classId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'live_classes',
+        filter: `id=eq.${classId}`,
+      }, ({ new: next }) => {
+        const status = next.status as 'scheduled' | 'live' | 'ended' | 'cancelled';
+        setSessionStatus(status);
+        if (localRole === 'student' && (status === 'ended' || status === 'cancelled')) {
+          alert(`This live class has ${status === 'ended' ? 'ended' : 'been cancelled'}.`);
+          navigate(-1);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      void statusChannel.unsubscribe();
+    };
+  }, [classId, localRole, navigate]);
+
   // ─── WebRTC hook (camera, mic, peer connections, signaling) ───────────────
 
   const {
@@ -141,6 +183,7 @@ export default function LiveClassRoom() {
     toggleHand,
     broadcastEvent,
     channelRef,
+    channel,
   } = useWebRTC({
     classId: classId || 'demo',
     localPeerId,
@@ -168,7 +211,7 @@ export default function LiveClassRoom() {
     senderId: localPeerId,
     senderName: localName,
     senderRole: localRole,
-    channel: channelRef.current,
+    channel,
   });
 
   // ─── Live presence hook ────────────────────────────────────────────────────
@@ -176,7 +219,6 @@ export default function LiveClassRoom() {
   const {
     participants,
     raisedHandCount,
-    getRemoteStream,
     muteAll,
     disableAllCameras,
     lowerAllHands,
@@ -192,6 +234,8 @@ export default function LiveClassRoom() {
     localHandRaised,
     channelRef,
   });
+
+  const isHost = localRole !== 'student';
 
   // ─── Questions (from DB or fallback demo) ─────────────────────────────────
 
@@ -233,7 +277,7 @@ export default function LiveClassRoom() {
       });
     }
 
-    if (localRole === 'host') {
+    if (isHost) {
       ch.on('broadcast', { event: 'exercise_submit' }, ({ payload }) => {
         setExerciseResults(prev => {
           if (prev.some(r => r.studentId === payload.studentId)) return prev;
@@ -241,7 +285,7 @@ export default function LiveClassRoom() {
         });
       });
     }
-  }, [channelRef, localRole]);
+  }, [channelRef, channel, localRole, isHost]);
 
   const handleStartExercise = useCallback(() => {
     setExerciseActive(true);
@@ -346,15 +390,15 @@ export default function LiveClassRoom() {
     }
   };
 
-  const isHost = localRole === 'host';
+
 
   // Participant panel controls
   const handleToggleParticipantMic = (id: string) => {
     // Signal mute to that participant (they respond to it)
     broadcastEvent('mute_participant', { target: id });
   };
-  const handleToggleParticipantCamera = (_id: string) => {
-    // Camera control is local — just visual indicator update
+  const handleToggleParticipantCamera = (id: string) => {
+    broadcastEvent('disable_participant_camera', { target: id });
   };
   const handleLowerHand = (id: string) => {
     broadcastEvent('lower_hand', { target: id });
@@ -377,8 +421,8 @@ export default function LiveClassRoom() {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-white font-bold text-sm truncate max-w-[180px] sm:max-w-md">{sessionDetails.title}</h2>
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-extrabold tracking-wide">
-                <Radio size={10} className="animate-pulse" /> LIVE
+              <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-white text-[10px] font-extrabold tracking-wide ${sessionStatus === 'live' ? 'bg-red-600' : 'bg-slate-600'}`}>
+                <Radio size={10} className={sessionStatus === 'live' ? 'animate-pulse' : ''} /> {sessionStatus.toUpperCase()}
               </span>
             </div>
             {sessionDetails.category && <p className="text-slate-400 text-xs">{sessionDetails.category}</p>}

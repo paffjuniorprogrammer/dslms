@@ -21,6 +21,26 @@ interface UseLiveChatOptions {
   channel?: RealtimeChannel | null;
 }
 
+function mapChatRow(row: {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_role: string;
+  message: string;
+  pinned: boolean;
+  created_at: string;
+}): ChatMessage {
+  return {
+    id: row.id,
+    senderId: row.sender_id,
+    senderName: row.sender_name,
+    senderRole: row.sender_role as ParticipantRole,
+    text: row.message,
+    timestamp: new Date(row.created_at).getTime(),
+    pinned: row.pinned,
+  };
+}
+
 export function useLiveChat({
   classId,
   senderId,
@@ -51,23 +71,7 @@ export function useLiveChat({
       .limit(100)
       .then(({ data, error }) => {
         if (!error && data) {
-          const mapped: ChatMessage[] = data.map((row: {
-            id: string;
-            sender_id: string;
-            sender_name: string;
-            sender_role: string;
-            message: string;
-            pinned: boolean;
-            created_at: string;
-          }) => ({
-            id: row.id,
-            senderId: row.sender_id,
-            senderName: row.sender_name,
-            senderRole: row.sender_role as 'host' | 'student',
-            text: row.message,
-            timestamp: new Date(row.created_at).getTime(),
-            pinned: row.pinned,
-          }));
+          const mapped: ChatMessage[] = data.map(mapChatRow);
           setMessages(mapped);
         }
         setIsLoading(false);
@@ -79,27 +83,37 @@ export function useLiveChat({
   useEffect(() => {
     if (!classId) return;
 
+    const handleIncomingMessage = ({ payload }: { payload: Record<string, unknown> }) => {
+      const msg: ChatMessage = {
+        id: payload.id as string,
+        senderId: payload.senderId as string,
+        senderName: payload.senderName as string,
+        senderRole: (payload.senderRole as ParticipantRole) || 'student',
+        text: payload.text as string,
+        timestamp: payload.timestamp as number,
+        pinned: false,
+      };
+      setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
+    };
+
+    const handleDatabaseMessage = ({ new: row }: { new: Record<string, unknown> }) => {
+      const msg = mapChatRow(row as unknown as Parameters<typeof mapChatRow>[0]);
+      setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg].sort((a, b) => a.timestamp - b.timestamp));
+    };
+
     // If no external channel, create our own
     if (!externalChannel) {
       const ch = supabase.channel(`live_class_chat:${classId}`, {
         config: { broadcast: { self: false } },
       });
 
-      ch.on('broadcast', { event: 'chat' }, ({ payload }) => {
-        const msg: ChatMessage = {
-          id: payload.id as string,
-          senderId: payload.senderId as string,
-          senderName: payload.senderName as string,
-          senderRole: (payload.senderRole as 'host' | 'student') || 'student',
-          text: payload.text as string,
-          timestamp: payload.timestamp as number,
-          pinned: false,
-        };
-        setMessages(prev => {
-          if (prev.some(m => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        });
-      });
+      ch.on('broadcast', { event: 'chat' }, handleIncomingMessage);
+      ch.on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'live_class_messages',
+        filter: `class_id=eq.${classId}`,
+      }, handleDatabaseMessage);
 
       ch.on('broadcast', { event: 'pin_message' }, ({ payload }) => {
         setMessages(prev =>
@@ -119,22 +133,14 @@ export function useLiveChat({
         ownChannelRef.current = null;
       };
     } else {
-      // Listen on the shared channel
-      externalChannel.on('broadcast', { event: 'chat' }, ({ payload }) => {
-        const msg: ChatMessage = {
-          id: payload.id as string,
-          senderId: payload.senderId as string,
-          senderName: payload.senderName as string,
-          senderRole: (payload.senderRole as 'host' | 'student') || 'student',
-          text: payload.text as string,
-          timestamp: payload.timestamp as number,
-          pinned: false,
-        };
-        setMessages(prev => {
-          if (prev.some(m => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        });
-      });
+      // Listen on the shared channel for both instant broadcasts and durable inserts.
+      externalChannel.on('broadcast', { event: 'chat' }, handleIncomingMessage);
+      externalChannel.on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'live_class_messages',
+        filter: `class_id=eq.${classId}`,
+      }, handleDatabaseMessage);
 
       externalChannel.on('broadcast', { event: 'pin_message' }, ({ payload }) => {
         setMessages(prev =>
@@ -163,7 +169,7 @@ export function useLiveChat({
     };
 
     // Optimistic update
-    setMessages(prev => [...prev, msg]);
+    setMessages(prev => prev.some(existing => existing.id === msg.id) ? prev : [...prev, msg]);
 
     // Broadcast to room
     const ch = getChannel();
