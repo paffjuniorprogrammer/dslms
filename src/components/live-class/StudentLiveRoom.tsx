@@ -86,6 +86,14 @@ export default function StudentLiveRoom({
 
   const hostStream = hostPeer?.stream ?? null;
   const hasHostVideo = Boolean(hostStream?.getVideoTracks().some(track => track.readyState === 'live' && track.enabled));
+  const hostConnectionState = hostPeer?.connectionState ?? 'new';
+  const hostConnectionLabel = hostConnectionState === 'connected'
+    ? 'Teacher media connected'
+    : hostConnectionState === 'failed'
+    ? 'Connection problem'
+    : hostConnectionState === 'disconnected'
+    ? 'Reconnecting teacher media…'
+    : 'Connecting to teacher…';
 
   // ─── Exercise state (received from host) ──────────────────────────────────
 
@@ -362,6 +370,7 @@ export default function StudentLiveRoom({
                 ref={setHostVideoRef}
                 autoPlay
                 playsInline
+                muted
                 className="w-full h-full object-cover"
               />
             ) : (
@@ -388,6 +397,12 @@ export default function StudentLiveRoom({
               >
                 Click to enable teacher audio
               </button>
+            )}
+
+            {hostPeer && hostConnectionState !== 'connected' && (
+              <div className={`absolute top-3 left-3 z-20 px-3 py-1.5 rounded-xl text-[11px] font-bold shadow-lg ${hostConnectionState === 'failed' ? 'bg-rose-600 text-white' : 'bg-slate-950/80 text-slate-200'}`}>
+                {hostConnectionLabel}
+              </div>
             )}
 
             {/* Teacher Name Tag */}

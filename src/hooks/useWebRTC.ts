@@ -70,7 +70,12 @@ function getIceConfig(turnUrl?: string): RTCConfiguration {
     });
   }
 
-  return { iceServers };
+  return {
+    iceServers,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require',
+    iceCandidatePoolSize: 10,
+  };
 }
 
 async function tuneSender(sender: RTCRtpSender) {
@@ -367,7 +372,11 @@ export function useWebRTC({
 
   const handleIceCandidate = useCallback(async (from: string, candidate: RTCIceCandidateInit) => {
     const pc = peerConnections.current.get(from);
-    if (!pc) return;
+    if (!pc) {
+      const queued = pendingIceCandidatesRef.current.get(from) ?? [];
+      pendingIceCandidatesRef.current.set(from, [...queued, candidate]);
+      return;
+    }
 
     if (!pc.remoteDescription || !pc.remoteDescription.type) {
       const queued = pendingIceCandidatesRef.current.get(from) ?? [];
@@ -564,6 +573,7 @@ export function useWebRTC({
       const audioTrack = stream.getAudioTracks()[0];
       const shouldEnableMic = localRole !== 'student' || micStateRef.current === 'on';
       if (audioTrack) {
+        audioTrack.contentHint = 'speech';
         audioTrack.enabled = shouldEnableMic;
         await audioTrack.applyConstraints({
           echoCancellation: true,
@@ -637,6 +647,7 @@ export function useWebRTC({
         },
       });
       const audioTrack = audioStream.getAudioTracks()[0];
+      if (audioTrack) audioTrack.contentHint = 'speech';
       await audioTrack?.applyConstraints({
         echoCancellation: true,
         noiseSuppression: true,
@@ -679,6 +690,7 @@ export function useWebRTC({
       setMediaError(null);
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       const videoTrack = stream.getVideoTracks()[0];
+      videoTrack.contentHint = 'motion';
 
       videoTrack.onended = () => {
         screenStreamRef.current = null;
