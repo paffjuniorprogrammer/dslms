@@ -34,6 +34,7 @@ export default function JitsiClassroom({ classId, displayName, role, onJoined }:
   const apiRef = useRef<JitsiApi | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'joined' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
+  const [runtimeWarning, setRuntimeWarning] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,9 +84,11 @@ export default function JitsiClassroom({ classId, displayName, role, onJoined }:
         onJoined?.();
       });
       api.addListener('readyToClose', () => setStatus('ready'));
-      api.addListener('errorOccurred', () => {
-        setStatus('error');
-        setError('Jitsi could not connect to the classroom. Please refresh and try again.');
+      // Jitsi can emit recoverable device/pre-join warnings through this event.
+      // Keep the iframe mounted so its own retry and permission UI remains usable.
+      api.addListener('errorOccurred', (...args: unknown[]) => {
+        console.warn('Jitsi classroom warning', ...args);
+        setRuntimeWarning('Jitsi is still connecting. Check camera/microphone permissions or retry from the meeting controls.');
       });
     };
 
@@ -114,20 +117,31 @@ export default function JitsiClassroom({ classId, displayName, role, onJoined }:
   return (
     <div className="relative w-full h-full min-h-[320px] bg-slate-950 overflow-hidden">
       <div ref={containerRef} className="absolute inset-0" />
-      {status !== 'joined' && status !== 'error' && (
+      {status === 'loading' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-slate-950/90 text-slate-200 pointer-events-none">
-          {status === 'loading' ? <Loader2 size={30} className="animate-spin text-blue-400" /> : <Video size={30} className="text-blue-400" />}
-          <span className="text-sm font-bold">{status === 'loading' ? 'Loading classroom…' : 'Connecting to classroom…'}</span>
-          <span className="text-xs text-slate-500">{role === 'teacher' ? 'Your microphone and camera are ready when Jitsi opens.' : 'You join muted; the teacher’s media will appear automatically.'}</span>
+          <Loader2 size={30} className="animate-spin text-blue-400" />
+          <span className="text-sm font-bold">Loading classroom…</span>
+          <span className="text-xs text-slate-500">{role === 'teacher' ? 'Your microphone and camera will be available inside Jitsi.' : 'You join muted; the teacher’s media will appear automatically.'}</span>
+        </div>
+      )}
+      {status === 'ready' && (
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-xl bg-slate-950/80 px-3 py-1.5 text-[11px] font-bold text-slate-200 pointer-events-none">
+          <Video size={14} className="text-blue-400" /> Connecting to classroom…
+        </div>
+      )}
+      {runtimeWarning && status !== 'joined' && (
+        <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl bg-amber-500 px-3 py-2 text-[11px] font-bold text-slate-950 shadow-xl">
+          <span>{runtimeWarning}</span>
+          <button onClick={() => window.location.reload()} className="rounded-lg bg-slate-950/20 px-2 py-1 underline">Retry</button>
         </div>
       )}
       {status === 'error' && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950 text-center p-6">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950/95 text-center p-6">
           <WifiOff size={32} className="text-rose-400" />
-          <p className="text-sm font-bold text-white">Classroom connection unavailable</p>
+          <p className="text-sm font-bold text-white">Could not load the classroom service</p>
           <p className="max-w-md text-xs text-slate-400">{error}</p>
           <button onClick={() => window.location.reload()} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-500">
-            <ExternalLink size={14} /> Refresh classroom
+            <ExternalLink size={14} /> Retry classroom
           </button>
         </div>
       )}
