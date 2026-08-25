@@ -9,12 +9,12 @@
  * - Sends exercise_submit when done
  */
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  X, Send, Hand, Mic, MicOff, Camera, CameraOff,
-  Radio, Users, MessageCircle, ClipboardList, CheckCircle2
+  X, Send, Radio, Users, MessageCircle, ClipboardList, CheckCircle2
 } from 'lucide-react';
 import { useWebRTC } from '@/hooks/useWebRTC';
+import JitsiClassroom from '@/components/live-class/JitsiClassroom';
 import { useLiveChat } from '@/hooks/useLiveChat';
 import type { ExerciseQuestion, StudentAnswer, ExerciseResult, ExerciseProgress, SharedBroadcastState } from '@/types/live-class';
 
@@ -43,15 +43,7 @@ export default function StudentLiveRoom({
   // ─── WebRTC ───────────────────────────────────────────────────────────────
 
   const {
-    localStream,
-    micState,
-    cameraState,
-    mediaError,
-    localHandRaised,
     remotePeers,
-    toggleMic,
-    toggleCamera,
-    toggleHand,
     broadcastEvent,
     channelRef,
     channel,
@@ -61,6 +53,7 @@ export default function StudentLiveRoom({
     localName: studentName,
     localRole: 'student',
     turnUrl: import.meta.env.VITE_TURN_SERVER_URL,
+    enableMedia: false,
   });
 
   // ─── Live chat ────────────────────────────────────────────────────────────
@@ -72,28 +65,7 @@ export default function StudentLiveRoom({
     senderRole: 'student',
   });
 
-  // ─── Find host / teacher stream ───────────────────────────────────────────
-
-  const hostPeer = useMemo(() => {
-    const peers = Array.from(remotePeers.values());
-    return (
-      peers.find(p => p.role === 'teacher' || p.role === 'host' || p.role === 'school_admin' || p.role === 'super_admin') ||
-      peers.find(p => p.stream !== null) ||
-      peers[0] ||
-      null
-    );
-  }, [remotePeers]);
-
-  const hostStream = hostPeer?.stream ?? null;
-  const hasHostVideo = Boolean(hostStream?.getVideoTracks().some(track => track.readyState === 'live' && track.enabled));
-  const hostConnectionState = hostPeer?.connectionState ?? 'new';
-  const hostConnectionLabel = hostConnectionState === 'connected'
-    ? 'Teacher media connected'
-    : hostConnectionState === 'failed'
-    ? 'Connection problem'
-    : hostConnectionState === 'disconnected'
-    ? 'Reconnecting teacher media…'
-    : 'Connecting to teacher…';
+  // Jitsi owns camera and microphone media. Supabase remains the room bus for chat, presence, and exercises.
 
   // ─── Exercise state (received from host) ──────────────────────────────────
 
@@ -108,23 +80,8 @@ export default function StudentLiveRoom({
   const [sharedBroadcastResults, setSharedBroadcastResults] = useState<ExerciseResult[]>([]);
   const [presentedQuestion, setPresentedQuestion] = useState<ExerciseQuestion | null>(null);
   const [presentedAnswerRevealed, setPresentedAnswerRevealed] = useState(false);
-  const [remoteAudioBlocked, setRemoteAudioBlocked] = useState(false);
-  const hostVideoElementRef = useRef<HTMLVideoElement | null>(null);
-  const hostAudioElementRef = useRef<HTMLAudioElement | null>(null);
-  const micStateRef = useRef(micState);
-  const cameraStateRef = useRef(cameraState);
-  const localHandRaisedRef = useRef(localHandRaised);
-  const toggleMicRef = useRef(toggleMic);
-  const toggleCameraRef = useRef(toggleCamera);
-  const toggleHandRef = useRef(toggleHand);
   const onLeaveRef = useRef(onLeave);
 
-  useEffect(() => { micStateRef.current = micState; }, [micState]);
-  useEffect(() => { cameraStateRef.current = cameraState; }, [cameraState]);
-  useEffect(() => { localHandRaisedRef.current = localHandRaised; }, [localHandRaised]);
-  useEffect(() => { toggleMicRef.current = toggleMic; }, [toggleMic]);
-  useEffect(() => { toggleCameraRef.current = toggleCamera; }, [toggleCamera]);
-  useEffect(() => { toggleHandRef.current = toggleHand; }, [toggleHand]);
   useEffect(() => { onLeaveRef.current = onLeave; }, [onLeave]);
 
   useEffect(() => {
@@ -188,23 +145,7 @@ export default function StudentLiveRoom({
       setPresentedAnswerRevealed(false);
     });
 
-    // Handle mute / removal from host
-    ch.on('broadcast', { event: 'mute_all' }, () => {
-      if (micStateRef.current === 'on') toggleMicRef.current();
-    });
-
-    ch.on('broadcast', { event: 'mute_participant' }, ({ payload }) => {
-      if (payload.target === studentId && micStateRef.current === 'on') toggleMicRef.current();
-    });
-
-    ch.on('broadcast', { event: 'disable_participant_camera' }, ({ payload }) => {
-      if (payload.target === studentId && cameraStateRef.current === 'on') toggleCameraRef.current();
-    });
-
-    ch.on('broadcast', { event: 'disable_all_cameras' }, () => {
-      if (cameraStateRef.current === 'on') toggleCameraRef.current();
-    });
-
+    // Teacher removal remains a DSLMS classroom control; Jitsi owns media controls.
     ch.on('broadcast', { event: 'remove_participant' }, ({ payload }) => {
       if (payload.target === studentId) {
         alert('You have been removed from this class by the teacher.');
@@ -212,9 +153,6 @@ export default function StudentLiveRoom({
       }
     });
 
-    ch.on('broadcast', { event: 'lower_hand' }, ({ payload }) => {
-      if (payload.target === studentId && localHandRaisedRef.current) toggleHandRef.current();
-    });
 
   }, [channel, channelRef, studentId]);
 
@@ -287,31 +225,6 @@ export default function StudentLiveRoom({
     return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
-  // ─── Callback refs for auto-playing streams ───────────────────────────────
-
-  const setHostVideoRef = useCallback((el: HTMLVideoElement | null) => {
-    hostVideoElementRef.current = el;
-    if (el && hostStream) {
-      if (el.srcObject !== hostStream) el.srcObject = hostStream;
-      el.play().then(() => setRemoteAudioBlocked(false)).catch(() => setRemoteAudioBlocked(true));
-    }
-  }, [hostStream]);
-
-  const setHostAudioRef = useCallback((el: HTMLAudioElement | null) => {
-    hostAudioElementRef.current = el;
-    if (el && hostStream) {
-      if (el.srcObject !== hostStream) el.srcObject = hostStream;
-      el.play().then(() => setRemoteAudioBlocked(false)).catch(() => setRemoteAudioBlocked(true));
-    }
-  }, [hostStream]);
-
-  const setLocalVideoRef = useCallback((el: HTMLVideoElement | null) => {
-    if (el && localStream) {
-      if (el.srcObject !== localStream) el.srcObject = localStream;
-      el.play().catch(() => {});
-    }
-  }, [localStream]);
-
   // ─── Chat input ───────────────────────────────────────────────────────────
 
   const [chatInput, setChatInput] = useState('');
@@ -329,7 +242,7 @@ export default function StudentLiveRoom({
     }
   };
 
-  const displayName = hostPeer?.name || instructorName;
+  const displayName = instructorName;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-950 text-white select-none overflow-hidden">
@@ -373,129 +286,21 @@ export default function StudentLiveRoom({
       {/* Main Layout Container */}
       <div className="flex-1 flex flex-col md:flex-row min-h-0 relative overflow-hidden">
 
-        {/* Video Area */}
+        {/* Jitsi Teacher-Led Classroom */}
         <div className={`flex flex-col min-w-0 bg-slate-950 relative ${
           showChat ? 'h-[40vh] md:h-full md:flex-1' : 'flex-1'
         }`}>
-
-          {/* Main Stage (Teacher Screen / Camera) */}
-          <div className="flex-1 bg-slate-900 relative flex items-center justify-center min-h-0 overflow-hidden">
-            {hostStream && <audio ref={setHostAudioRef} autoPlay playsInline className="sr-only" />}
-            {hasHostVideo ? (
-              <video
-                ref={setHostVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-2.5 text-slate-400 p-4">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white text-2xl font-black shadow-xl ring-4 ring-white/5">
-                  {displayName.charAt(0).toUpperCase()}
-                </div>
-                <div className="text-center">
-                  <p className="font-bold text-slate-200 text-xs sm:text-sm">{hostPeer ? displayName : 'Waiting for teacher...'}</p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    {hostPeer ? 'Teacher camera is off' : 'Teacher has not joined yet'}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {remoteAudioBlocked && hostStream && (
-              <button
-                onClick={() => Promise.all([
-                  hostVideoElementRef.current?.play(),
-                  hostAudioElementRef.current?.play(),
-                ]).then(() => setRemoteAudioBlocked(false)).catch(() => setRemoteAudioBlocked(true))}
-                className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-extrabold shadow-xl"
-              >
-                Click to enable teacher audio
-              </button>
-            )}
-
-            {hostPeer && hostConnectionState !== 'connected' && (
-              <div className={`absolute top-3 left-3 z-20 px-3 py-1.5 rounded-xl text-[11px] font-bold shadow-lg ${hostConnectionState === 'failed' ? 'bg-rose-600 text-white' : 'bg-slate-950/80 text-slate-200'}`}>
-                {hostConnectionLabel}
-              </div>
-            )}
-
-            {/* Teacher Name Tag */}
-            <div className="absolute bottom-2.5 left-2.5 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-xl text-[11px] font-semibold text-white flex items-center gap-1.5 z-10">
-              <span className={`w-2 h-2 rounded-full ${hostPeer ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
-              <span className="truncate max-w-[120px]">{displayName}</span>
-              {hostPeer?.micState === 'on' && <Mic size={11} className="text-emerald-400 flex-shrink-0" />}
-            </div>
-
-            {/* Own Camera (Picture-in-Picture) */}
-            <div className="absolute bottom-2.5 right-2.5 w-20 h-16 sm:w-28 sm:h-20 rounded-xl overflow-hidden bg-slate-900 border border-white/20 shadow-2xl z-10">
-              {localStream && cameraState === 'on' ? (
-                <video
-                  ref={setLocalVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover scale-x-[-1]"
-                />
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 bg-slate-950">
-                  <CameraOff size={14} />
-                  <span className="text-[9px] mt-0.5">You (Off)</span>
-                </div>
-              )}
-            </div>
-
-            {/* Media error banner */}
-            {mediaError && (
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-rose-600 text-white text-[11px] font-bold rounded-xl shadow-xl z-30">
-                {mediaError}
-              </div>
-            )}
+          <div className="flex-1 min-h-0">
+            <JitsiClassroom
+              classId={classId}
+              displayName={studentName}
+              role="student"
+            />
           </div>
-
-          {/* Quick Floating Controls on Mobile / Bottom Bar */}
-          <div className="flex-shrink-0 bg-slate-900/90 border-t border-white/10 px-3 py-2 flex items-center justify-center gap-2 sm:gap-3 z-10">
-            {/* Mic */}
-            <button
-              onClick={toggleMic}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                micState === 'on' ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-600/20 text-rose-400 border border-rose-500/30'
-              }`}
-            >
-              {micState === 'on' ? <Mic size={14} /> : <MicOff size={14} />}
-              <span>{micState === 'on' ? 'Unmuted' : 'Muted'}</span>
-            </button>
-
-            {/* Camera */}
-            <button
-              onClick={toggleCamera}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                cameraState === 'on' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 border border-white/10'
-              }`}
-            >
-              {cameraState === 'on' ? <Camera size={14} /> : <CameraOff size={14} />}
-              <span>{cameraState === 'on' ? 'Video On' : 'Video Off'}</span>
-            </button>
-
-            {/* Hand raise */}
-            <button
-              onClick={toggleHand}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                localHandRaised ? 'bg-amber-500/30 text-amber-300 border border-amber-400/50 animate-pulse' : 'bg-slate-800 text-slate-400 border border-white/10'
-              }`}
-            >
-              <Hand size={14} />
-              <span>{localHandRaised ? 'Raised' : 'Raise Hand'}</span>
-            </button>
-
-            {/* Leave */}
-            <button
-              onClick={onLeave}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition-all"
-            >
-              <X size={14} />
-              <span>Leave</span>
+          <div className="flex-shrink-0 flex items-center justify-between gap-3 bg-slate-900/95 border-t border-white/10 px-3 py-2">
+            <span className="text-[11px] text-slate-400">You joined muted. Use Jitsi controls to ask to speak.</span>
+            <button onClick={onLeave} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold transition-all">
+              <X size={14} /> Leave
             </button>
           </div>
         </div>

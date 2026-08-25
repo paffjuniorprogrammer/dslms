@@ -48,6 +48,8 @@ interface UseWebRTCOptions {
   localRole: ParticipantRole;
   /** Optional TURN server URL from env. Falls back to STUN only. */
   turnUrl?: string;
+  /** Disable custom media transport when a hosted classroom such as Jitsi owns audio/video. */
+  enableMedia?: boolean;
   onParticipantsChange?: (peers: RemotePeerState[]) => void;
 }
 
@@ -135,6 +137,7 @@ export function useWebRTC({
   localName,
   localRole,
   turnUrl,
+  enableMedia = true,
   onParticipantsChange,
 }: UseWebRTCOptions) {
   // Local streams
@@ -456,7 +459,7 @@ export function useWebRTC({
               handRaised: Boolean(presence['handRaised']),
             });
             // Teacher/host initiates toward students; same-role peers use a stable ID tie-breaker.
-            if (shouldInitiateOffer(localPeerId, localRole, peerId, role)) {
+            if (enableMedia && shouldInitiateOffer(localPeerId, localRole, peerId, role)) {
               initiateOffer(peerId, { peerId, name, role }).catch(console.warn);
             }
           }
@@ -479,7 +482,7 @@ export function useWebRTC({
             handRaised: Boolean(presence['handRaised']),
           });
           // Teacher/host initiates toward students; same-role peers use a stable ID tie-breaker.
-          if (shouldInitiateOffer(localPeerId, localRole, peerId, role)) {
+          if (enableMedia && shouldInitiateOffer(localPeerId, localRole, peerId, role)) {
             initiateOffer(peerId, { peerId, name, role }).catch(console.warn);
           }
         }
@@ -514,14 +517,14 @@ export function useWebRTC({
       const peerInfo = payload.fromInfo as PeerInfo | undefined;
       if (!peerInfo || peerInfo.peerId === localPeerId) return;
       updatePeer(peerInfo.peerId, { peerId: peerInfo.peerId, name: peerInfo.name, role: peerInfo.role });
-      if (shouldInitiateOffer(localPeerId, localRole, peerInfo.peerId, peerInfo.role)) {
+      if (enableMedia && shouldInitiateOffer(localPeerId, localRole, peerInfo.peerId, peerInfo.role)) {
         initiateOffer(peerInfo.peerId, peerInfo).catch(console.warn);
       }
     });
 
     // Broadcast: request a fresh offer after an ICE failure.
     channel.on('broadcast', { event: 'reconnect_request' }, ({ payload }) => {
-      if (payload.to !== localPeerId || !payload.fromInfo) return;
+      if (!enableMedia || payload.to !== localPeerId || !payload.fromInfo) return;
       initiateOffer(payload.from, payload.fromInfo as PeerInfo).catch(console.warn);
     });
 
@@ -550,7 +553,7 @@ export function useWebRTC({
           micState: micStateRef.current,
           cameraState: cameraStateRef.current,
         });
-        channel.send({
+        if (enableMedia) channel.send({
           type: 'broadcast',
           event: 'peer_ready',
           payload: {
@@ -568,12 +571,12 @@ export function useWebRTC({
       channelRef.current = null;
       setChannel(null);
     };
-  }, [classId, localPeerId, localName, localRole, handleOffer, handleAnswer, handleIceCandidate, initiateOffer, updatePeer, removePeer]);
+  }, [classId, localPeerId, localName, localRole, enableMedia, handleOffer, handleAnswer, handleIceCandidate, initiateOffer, updatePeer, removePeer]);
 
   // ─── Track replacement & renegotiation across peers ────────────────────────
 
   const syncTracksWithPeers = useCallback(async (newStream: MediaStream | null, streamKind: StreamKind = activeStreamKind || 'camera') => {
-    if (!newStream) return;
+    if (!enableMedia || !newStream) return;
     // Display audio must not replace the microphone sender. Screen sharing
     // changes video only; camera/mic changes synchronize both media kinds.
     const tracks = streamKind === 'screen' ? newStream.getVideoTracks() : newStream.getTracks();
@@ -601,7 +604,7 @@ export function useWebRTC({
         }
       }
     }
-  }, [initiateOffer, remotePeers, activeStreamKind]);
+  }, [initiateOffer, remotePeers, activeStreamKind, enableMedia]);
 
   // ─── Media controls ────────────────────────────────────────────────────────
 

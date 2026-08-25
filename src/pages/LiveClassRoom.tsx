@@ -5,8 +5,7 @@ import {
   ClipboardList, BarChart3, Copy, Check, Radio,
   ChevronLeft, Award, Sparkles, MonitorUp
 } from 'lucide-react';
-import VideoStage from '@/components/live-class/VideoStage';
-import MediaControls from '@/components/live-class/MediaControls';
+import JitsiClassroom from '@/components/live-class/JitsiClassroom';
 import ChatPanel from '@/components/live-class/ChatPanel';
 import ParticipantsPanel from '@/components/live-class/ParticipantsPanel';
 import LiveExercise from '@/components/live-class/LiveExercise';
@@ -170,18 +169,10 @@ export default function LiveClassRoom() {
 
   const {
     localStream,
-    screenStream,
     micState,
     cameraState,
-    isScreenSharing,
-    activeStreamKind,
-    mediaError,
     localHandRaised,
     remotePeers,
-    toggleMic,
-    toggleCamera,
-    toggleScreenShare,
-    toggleHand,
     broadcastEvent,
     channelRef,
     channel,
@@ -191,14 +182,8 @@ export default function LiveClassRoom() {
     localName,
     localRole,
     turnUrl: import.meta.env.VITE_TURN_SERVER_URL,
+    enableMedia: false,
   });
-
-  // Build remote streams map from remotePeers
-  const remoteStreams = useMemo(() => {
-    const map = new Map<string, MediaStream | null>();
-    remotePeers.forEach((peer, peerId) => map.set(peerId, peer.stream));
-    return map;
-  }, [remotePeers]);
 
   // ─── Live chat hook ────────────────────────────────────────────────────────
 
@@ -403,7 +388,6 @@ export default function LiveClassRoom() {
   // ─── UI state ─────────────────────────────────────────────────────────────
 
   const [sidePanel, setSidePanel] = useState<SidePanel>('chat');
-  const [pinnedId, setPinnedId] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -580,20 +564,10 @@ export default function LiveClassRoom() {
       {/* ── Main stage ── */}
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 flex flex-col min-w-0">
-          <VideoStage
-            participants={participants}
-            localStream={localStream}
-            screenStream={screenStream}
-            activeStreamKind={activeStreamKind}
-            pinnedId={pinnedId}
-            onPin={(id) => setPinnedId(pinnedId === id ? null : id)}
-            remoteStreams={remoteStreams}
-            localPeerId={localPeerId}
-            broadcastState={broadcastState}
-            exerciseResults={exerciseResults}
-            questions={questions}
-            onSelectStudentForBroadcast={(id) => handleUpdateBroadcast({ isSharing: true, sharedStudentId: id })}
-            onStopBroadcast={() => handleUpdateBroadcast({ isSharing: false, sharedStudentId: null, sharedQuestionId: null })}
+          <JitsiClassroom
+            classId={classId || 'demo'}
+            displayName={localName}
+            role="teacher"
           />
 
           {/* Teacher action bar */}
@@ -620,27 +594,10 @@ export default function LiveClassRoom() {
             </div>
           )}
 
-          {/* Media controls */}
-          <MediaControls
-            micState={micState}
-            cameraState={cameraState}
-            isScreenSharing={isScreenSharing}
-            handRaised={localHandRaised}
-            isHost={isHost}
-            onToggleMic={toggleMic}
-            onToggleCamera={toggleCamera}
-            onToggleScreenShare={toggleScreenShare}
-            onToggleHand={toggleHand}
-            onOpenSettings={() => { setSettingsTab('devices'); setIsSettingsOpen(true); }}
-            onLeave={handleLeave}
-          />
-
-          {/* Media error alert */}
-          {mediaError && (
-            <div className="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-2 bg-red-600 text-white text-xs font-bold rounded-xl shadow-xl z-50 animate-bounce">
-              {mediaError}
-            </div>
-          )}
+          <div className="flex items-center justify-center gap-3 px-4 py-2.5 bg-slate-900/95 border-t border-white/10">
+            <span className="text-xs text-slate-400">Jitsi classroom controls are available inside the meeting.</span>
+            <button onClick={handleLeave} className="px-3 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-500">Leave Class</button>
+          </div>
         </div>
 
         {/* ── Side panel ── */}
@@ -678,8 +635,8 @@ export default function LiveClassRoom() {
         localStream={localStream}
         micState={micState}
         cameraState={cameraState}
-        onToggleMic={toggleMic}
-        onToggleCamera={toggleCamera}
+        onToggleMic={() => {}}
+        onToggleCamera={() => {}}
         exerciseResults={exerciseResults}
         exerciseProgress={exerciseProgress}
         questions={questions}
