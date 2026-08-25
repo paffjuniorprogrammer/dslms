@@ -96,6 +96,32 @@ async function tuneSender(sender: RTCRtpSender) {
 // Hook
 // ─────────────────────────────────────────────────────────────────────────────
 
+async function createSpeechStream(source: MediaStream) {
+  const sourceAudioTrack = source.getAudioTracks()[0];
+  const AudioContextConstructor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!sourceAudioTrack || !AudioContextConstructor) return { stream: source, context: null as AudioContext | null };
+
+  const context = new AudioContextConstructor();
+  await context.resume().catch(() => {});
+  const input = context.createMediaStreamSource(new MediaStream([sourceAudioTrack]));
+  const gain = context.createGain();
+  gain.gain.value = 0.82;
+  const compressor = context.createDynamicsCompressor();
+  compressor.threshold.value = -24;
+  compressor.knee.value = 18;
+  compressor.ratio.value = 3;
+  compressor.attack.value = 0.003;
+  compressor.release.value = 0.25;
+  const output = context.createMediaStreamDestination();
+  input.connect(gain).connect(compressor).connect(output);
+
+  const processedStream = new MediaStream([
+    ...source.getVideoTracks(),
+    ...output.stream.getAudioTracks(),
+  ]);
+  return { stream: processedStream, context };
+}
+
 export function useWebRTC({
   classId,
   localPeerId,
@@ -129,6 +155,8 @@ export function useWebRTC({
   const makingOfferRef = useRef<Map<string, boolean>>(new Map());
   const pendingIceCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const reconnectTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const rawAudioTrackRef = useRef<MediaStreamTrack | null>(null);
 
   // Keep refs in sync with state
   useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
@@ -570,7 +598,13 @@ export function useWebRTC({
         },
       });
 
-      const audioTrack = stream.getAudioTracks()[0];
+      rawAudioTrackRef.current?.stop();
+      audioContextRef.current?.close().catch(() => {});
+      rawAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
+      const prepared = localRole === 'student' ? { stream, context: null as AudioContext | null } : await createSpeechStream(stream);
+      audioContextRef.current = prepared.context;
+      const preparedStream = prepared.stream;
+      const audioTrack = preparedStream.getAudioTracks()[0];
       const shouldEnableMic = localRole !== 'student' || micStateRef.current === 'on';
       if (audioTrack) {
         audioTrack.contentHint = 'speech';
@@ -583,13 +617,13 @@ export function useWebRTC({
         }).catch(() => {});
       }
 
-      localStreamRef.current = stream;
-      setLocalStream(stream);
+      localStreamRef.current = preparedStream;
+      setLocalStream(preparedStream);
       setCameraState('on');
       if (shouldEnableMic) setMicState('on');
       setActiveStreamKind('camera');
 
-      await syncTracksWithPeers(stream, 'camera');
+      await syncTracksWithPeers(preparedStream, 'camera');
 
       broadcast('media_state', { micState: shouldEnableMic ? 'on' : 'off', cameraState: 'on' });
     } catch (err) {
@@ -632,6 +666,7 @@ export function useWebRTC({
         const audioTracks = localStreamRef.current.getAudioTracks();
         if (audioTracks.length > 0) {
           audioTracks.forEach(t => (t.enabled = true));
+          if (rawAudioTrackRef.current) rawAudioTrackRef.current.enabled = true;
           setMicState('on');
           broadcast('media_state', { micState: 'on', cameraState: cameraStateRef.current });
           return;
@@ -646,7 +681,12 @@ export function useWebRTC({
           channelCount: 1,
         },
       });
-      const audioTrack = audioStream.getAudioTracks()[0];
+      rawAudioTrackRef.current?.stop();
+      audioContextRef.current?.close().catch(() => {});
+      rawAudioTrackRef.current = audioStream.getAudioTracks()[0] ?? null;
+      const prepared = localRole === 'student' ? { stream: audioStream, context: null as AudioContext | null } : await createSpeechStream(audioStream);
+      audioContextRef.current = prepared.context;
+      const audioTrack = prepared.stream.getAudioTracks()[0];
       if (audioTrack) audioTrack.contentHint = 'speech';
       await audioTrack?.applyConstraints({
         echoCancellation: true,
@@ -656,8 +696,8 @@ export function useWebRTC({
       }).catch(() => {});
 
       const newStream = localStreamRef.current
-        ? new MediaStream([...localStreamRef.current.getTracks(), audioTrack])
-        : new MediaStream([audioTrack]);
+        ? new MediaStream([...localStreamRef.current.getVideoTracks(), audioTrack])
+        : prepared.stream;
 
       localStreamRef.current = newStream;
       setLocalStream(newStream);
@@ -670,15 +710,21 @@ export function useWebRTC({
       console.error('Mic error:', err);
       setMediaError('Could not access microphone. Check browser permissions.');
     }
-  }, [syncTracksWithPeers, broadcast]);
+  }, [syncTracksWithPeers, broadcast, localRole]);
 
   const stopMic = useCallback(() => {
     if (localStreamRef.current) {
       localStreamRef.current.getAudioTracks().forEach(t => (t.enabled = false));
     }
+    if (rawAudioTrackRef.current) rawAudioTrackRef.current.enabled = false;
     setMicState('off');
     broadcast('media_state', { micState: 'off', cameraState: cameraStateRef.current });
   }, [broadcast]);
+
+  useEffect(() => () => {
+    rawAudioTrackRef.current?.stop();
+    audioContextRef.current?.close().catch(() => {});
+  }, []);
 
   const toggleMic = useCallback(() => {
     if (micState === 'on') stopMic();

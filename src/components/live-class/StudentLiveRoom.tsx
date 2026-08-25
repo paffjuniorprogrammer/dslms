@@ -107,6 +107,7 @@ export default function StudentLiveRoom({
   const [sharedBroadcast, setSharedBroadcast] = useState<SharedBroadcastState | null>(null);
   const [sharedBroadcastResults, setSharedBroadcastResults] = useState<ExerciseResult[]>([]);
   const [presentedQuestion, setPresentedQuestion] = useState<ExerciseQuestion | null>(null);
+  const [presentedAnswerRevealed, setPresentedAnswerRevealed] = useState(false);
   const [remoteAudioBlocked, setRemoteAudioBlocked] = useState(false);
   const hostVideoElementRef = useRef<HTMLVideoElement | null>(null);
   const hostAudioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -158,6 +159,7 @@ export default function StudentLiveRoom({
     ch.on('broadcast', { event: 'question_present' }, ({ payload }) => {
       const question = payload.question as Partial<ExerciseQuestion> | undefined;
       if (!question?.id || !question.text) return;
+      setPresentedAnswerRevealed(false);
       setPresentedQuestion({
         id: question.id,
         text: question.text,
@@ -168,8 +170,22 @@ export default function StudentLiveRoom({
       });
     });
 
+    ch.on('broadcast', { event: 'question_answer_reveal' }, ({ payload }) => {
+      const shouldReveal = Boolean(payload.showCorrectAnswer);
+      setPresentedAnswerRevealed(shouldReveal);
+      setPresentedQuestion(prev => {
+        if (!prev || prev.id !== payload.questionId) return prev;
+        return {
+          ...prev,
+          correctAnswer: shouldReveal ? String(payload.correctAnswer || '') : '',
+          explanation: shouldReveal ? (payload.explanation as string | undefined) : undefined,
+        };
+      });
+    });
+
     ch.on('broadcast', { event: 'question_present_close' }, () => {
       setPresentedQuestion(null);
+      setPresentedAnswerRevealed(false);
     });
 
     // Handle mute / removal from host
@@ -567,6 +583,13 @@ export default function StudentLiveRoom({
                     <span>{option}</span>
                   </div>
                 ))}
+              </div>
+            )}
+            {presentedAnswerRevealed && presentedQuestion.correctAnswer && (
+              <div className="mt-8 p-4 rounded-2xl bg-emerald-950/50 border border-emerald-400/40">
+                <div className="text-[11px] font-black uppercase tracking-wider text-emerald-300 mb-1">Correct answer</div>
+                <div className="text-lg font-extrabold text-emerald-100">{presentedQuestion.correctAnswer}</div>
+                {presentedQuestion.explanation && <p className="text-xs text-emerald-200/80 mt-2">{presentedQuestion.explanation}</p>}
               </div>
             )}
             <p className="text-xs text-slate-400 mt-6">Listen to your teacher’s explanation. The teacher will close this presentation when ready.</p>

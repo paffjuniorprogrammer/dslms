@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Radio, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Radio, X, Eye, EyeOff } from 'lucide-react';
 import type { ExerciseQuestion } from '@/types/live-class';
 
 interface LiveQuestionPresenterProps {
@@ -6,6 +6,8 @@ interface LiveQuestionPresenterProps {
   currentIndex: number;
   onChange: (index: number) => void;
   onClose: () => void;
+  answerRevealed: boolean;
+  onToggleAnswer: () => void;
 }
 
 export default function LiveQuestionPresenter({
@@ -13,6 +15,8 @@ export default function LiveQuestionPresenter({
   currentIndex,
   onChange,
   onClose,
+  answerRevealed,
+  onToggleAnswer,
 }: LiveQuestionPresenterProps) {
   if (questions.length === 0) return null;
   const question = questions[Math.min(currentIndex, questions.length - 1)];
@@ -50,6 +54,14 @@ export default function LiveQuestionPresenter({
               ))}
             </div>
           )}
+
+          {answerRevealed && (
+            <div className="mt-8 p-4 rounded-2xl bg-emerald-950/50 border border-emerald-400/40">
+              <div className="text-[11px] font-black uppercase tracking-wider text-emerald-300 mb-1">Correct answer revealed to students</div>
+              <div className="text-lg font-extrabold text-emerald-100">{question.correctAnswer}</div>
+              {question.explanation && <p className="text-xs text-emerald-200/80 mt-2">{question.explanation}</p>}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-white/10 bg-slate-950/80">
@@ -60,7 +72,16 @@ export default function LiveQuestionPresenter({
           >
             <ChevronLeft size={16} /> Previous
           </button>
-          <span className="text-xs text-slate-400">Read this question aloud, then guide students through the answer.</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onToggleAnswer}
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold ${answerRevealed ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-amber-500 text-slate-950 hover:bg-amber-400'}`}
+            >
+              {answerRevealed ? <EyeOff size={15} /> : <Eye size={15} />}
+              {answerRevealed ? 'Hide Correct Answer' : 'Show Correct Answer'}
+            </button>
+          </div>
+          <span className="hidden sm:block text-xs text-slate-400">Read this question aloud, then guide students through the answer.</span>
           <button
             disabled={currentIndex >= questions.length - 1}
             onClick={() => onChange(currentIndex + 1)}

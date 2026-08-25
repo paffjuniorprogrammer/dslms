@@ -268,6 +268,7 @@ export default function LiveClassRoom() {
   const [showPreExModal, setShowPreExModal] = useState(false);
   const [isQuestionPresenterOpen, setIsQuestionPresenterOpen] = useState(false);
   const [presentingQuestionIndex, setPresentingQuestionIndex] = useState(0);
+  const [answerRevealed, setAnswerRevealed] = useState(false);
   const questionsRef = useRef(questions);
   const exerciseIdRef = useRef(exerciseId);
 
@@ -330,6 +331,7 @@ export default function LiveClassRoom() {
     const question = questions[index];
     if (!question) return;
     setPresentingQuestionIndex(index);
+    setAnswerRevealed(false);
     broadcastEvent('question_present', {
       index,
       totalQuestions: questions.length,
@@ -343,8 +345,22 @@ export default function LiveClassRoom() {
     });
   }, [broadcastEvent, questions]);
 
+  const handleToggleAnswer = useCallback(() => {
+    const question = questions[presentingQuestionIndex];
+    if (!question) return;
+    const nextRevealed = !answerRevealed;
+    setAnswerRevealed(nextRevealed);
+    broadcastEvent('question_answer_reveal', {
+      questionId: question.id,
+      showCorrectAnswer: nextRevealed,
+      correctAnswer: nextRevealed ? question.correctAnswer : '',
+      explanation: nextRevealed ? question.explanation : undefined,
+    });
+  }, [answerRevealed, broadcastEvent, presentingQuestionIndex, questions]);
+
   const handleCloseQuestionPresenter = useCallback(() => {
     setIsQuestionPresenterOpen(false);
+    setAnswerRevealed(false);
     broadcastEvent('question_present_close', {});
   }, [broadcastEvent]);
 
@@ -697,6 +713,8 @@ export default function LiveClassRoom() {
           currentIndex={presentingQuestionIndex}
           onChange={handlePresentQuestion}
           onClose={handleCloseQuestionPresenter}
+          answerRevealed={answerRevealed}
+          onToggleAnswer={handleToggleAnswer}
         />
       )}
 
