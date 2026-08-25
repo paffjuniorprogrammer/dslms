@@ -99,6 +99,9 @@ export default function StudentLiveRoom({
   const [sharedBroadcast, setSharedBroadcast] = useState<SharedBroadcastState | null>(null);
   const [sharedBroadcastResults, setSharedBroadcastResults] = useState<ExerciseResult[]>([]);
   const [presentedQuestion, setPresentedQuestion] = useState<ExerciseQuestion | null>(null);
+  const [remoteAudioBlocked, setRemoteAudioBlocked] = useState(false);
+  const hostVideoElementRef = useRef<HTMLVideoElement | null>(null);
+  const hostAudioElementRef = useRef<HTMLAudioElement | null>(null);
   const micStateRef = useRef(micState);
   const cameraStateRef = useRef(cameraState);
   const localHandRaisedRef = useRef(localHandRaised);
@@ -263,9 +266,18 @@ export default function StudentLiveRoom({
   // ─── Callback refs for auto-playing streams ───────────────────────────────
 
   const setHostVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    hostVideoElementRef.current = el;
     if (el && hostStream) {
       if (el.srcObject !== hostStream) el.srcObject = hostStream;
-      el.play().catch(() => {});
+      el.play().then(() => setRemoteAudioBlocked(false)).catch(() => setRemoteAudioBlocked(true));
+    }
+  }, [hostStream]);
+
+  const setHostAudioRef = useCallback((el: HTMLAudioElement | null) => {
+    hostAudioElementRef.current = el;
+    if (el && hostStream) {
+      if (el.srcObject !== hostStream) el.srcObject = hostStream;
+      el.play().then(() => setRemoteAudioBlocked(false)).catch(() => setRemoteAudioBlocked(true));
     }
   }, [hostStream]);
 
@@ -344,6 +356,7 @@ export default function StudentLiveRoom({
 
           {/* Main Stage (Teacher Screen / Camera) */}
           <div className="flex-1 bg-slate-900 relative flex items-center justify-center min-h-0 overflow-hidden">
+            {hostStream && <audio ref={setHostAudioRef} autoPlay playsInline className="sr-only" />}
             {hasHostVideo ? (
               <video
                 ref={setHostVideoRef}
@@ -363,6 +376,18 @@ export default function StudentLiveRoom({
                   </p>
                 </div>
               </div>
+            )}
+
+            {remoteAudioBlocked && hostStream && (
+              <button
+                onClick={() => Promise.all([
+                  hostVideoElementRef.current?.play(),
+                  hostAudioElementRef.current?.play(),
+                ]).then(() => setRemoteAudioBlocked(false)).catch(() => setRemoteAudioBlocked(true))}
+                className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-extrabold shadow-xl"
+              >
+                Click to enable teacher audio
+              </button>
             )}
 
             {/* Teacher Name Tag */}

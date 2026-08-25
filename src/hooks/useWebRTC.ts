@@ -37,6 +37,8 @@ export interface RemotePeerState {
   cameraState: MediaState;
   handRaised: boolean;
   isSpeaking: boolean;
+  connectionState: RTCPeerConnectionState;
+  iceConnectionState: RTCIceConnectionState;
 }
 
 interface UseWebRTCOptions {
@@ -69,6 +71,20 @@ function getIceConfig(turnUrl?: string): RTCConfiguration {
   }
 
   return { iceServers };
+}
+
+async function tuneSender(sender: RTCRtpSender) {
+  const parameters = sender.getParameters();
+  if (parameters.encodings && parameters.encodings.length > 0) {
+    const encoding = parameters.encodings[0];
+    if (sender.track?.kind === 'video') {
+      encoding.maxBitrate = 800_000;
+      encoding.maxFramerate = 24;
+    } else if (sender.track?.kind === 'audio') {
+      encoding.maxBitrate = 64_000;
+    }
+    await sender.setParameters(parameters).catch(() => {});
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,14 +120,17 @@ export function useWebRTC({
   const screenStreamRef = useRef<MediaStream | null>(null);
   const micStateRef = useRef<MediaState>('off');
   const cameraStateRef = useRef<MediaState>('off');
+  const activeStreamKindRef = useRef<StreamKind | null>(null);
   const makingOfferRef = useRef<Map<string, boolean>>(new Map());
   const pendingIceCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const reconnectTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Keep refs in sync with state
   useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
   useEffect(() => { screenStreamRef.current = screenStream; }, [screenStream]);
   useEffect(() => { micStateRef.current = micState; }, [micState]);
   useEffect(() => { cameraStateRef.current = cameraState; }, [cameraState]);
+  useEffect(() => { activeStreamKindRef.current = activeStreamKind; }, [activeStreamKind]);
 
   // Notify parent when peers change
   useEffect(() => {
@@ -138,6 +157,8 @@ export function useWebRTC({
           cameraState: 'off',
           handRaised: false,
           isSpeaking: false,
+          connectionState: 'new',
+          iceConnectionState: 'new',
           ...updates,
         });
       }
@@ -151,6 +172,9 @@ export function useWebRTC({
     remoteStreamsRef.current.delete(peerId);
     makingOfferRef.current.delete(peerId);
     pendingIceCandidatesRef.current.delete(peerId);
+    const reconnectTimer = reconnectTimersRef.current.get(peerId);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimersRef.current.delete(peerId);
     setRemotePeers(prev => {
       const next = new Map(prev);
       next.delete(peerId);
@@ -180,18 +204,20 @@ export function useWebRTC({
 
     // Attach the current media tracks. Screen sharing replaces the video source,
     // but the local microphone remains the audio source for the room.
-    const activeStream = activeStreamKind === 'screen'
+    const activeStream = activeStreamKindRef.current === 'screen'
       ? screenStreamRef.current
       : localStreamRef.current;
     if (activeStream) {
-      activeStream.getTracks().forEach(track => {
-        if (activeStreamKind === 'screen' && track.kind === 'audio') return;
-        pc.addTrack(track, activeStream);
+        activeStream.getTracks().forEach(track => {
+        if (activeStreamKindRef.current === 'screen' && track.kind === 'audio') return;
+        const sender = pc.addTrack(track, activeStream);
+        tuneSender(sender);
       });
     }
-    if (activeStreamKind === 'screen' && localStreamRef.current) {
+    if (activeStreamKindRef.current === 'screen' && localStreamRef.current) {
       localStreamRef.current.getAudioTracks().forEach(track => {
-        pc.addTrack(track, localStreamRef.current as MediaStream);
+        const sender = pc.addTrack(track, localStreamRef.current as MediaStream);
+        tuneSender(sender);
       });
     }
 
@@ -218,19 +244,45 @@ export function useWebRTC({
       updatePeer(remotePeerId, { stream: remoteStream });
     };
 
-    // Connection state monitoring
+    // Connection state monitoring and one-shot recovery. The room remains
+    // connected while a failed peer negotiates again, instead of leaving the
+    // user with a silent black tile.
     pc.onconnectionstatechange = () => {
+      updatePeer(remotePeerId, {
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState,
+      });
+
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        if (pc.restartIce) pc.restartIce();
+        if (!reconnectTimersRef.current.has(remotePeerId)) {
+          const timer = setTimeout(() => {
+            reconnectTimersRef.current.delete(remotePeerId);
+            if (peerConnections.current.get(remotePeerId) !== pc || pc.connectionState === 'closed') return;
+            pc.restartIce();
+            broadcast('reconnect_request', {
+              to: remotePeerId,
+              fromInfo: { peerId: localPeerId, name: localName, role: localRole },
+            });
+          }, 1200);
+          reconnectTimersRef.current.set(remotePeerId, timer);
+        }
+      } else if (pc.connectionState === 'connected') {
+        const timer = reconnectTimersRef.current.get(remotePeerId);
+        if (timer) clearTimeout(timer);
+        reconnectTimersRef.current.delete(remotePeerId);
       }
+
       if (pc.connectionState === 'closed') {
         removePeer(remotePeerId);
       }
     };
+    pc.oniceconnectionstatechange = () => {
+      updatePeer(remotePeerId, { iceConnectionState: pc.iceConnectionState });
+    };
 
     peerConnections.current.set(remotePeerId, pc);
     return pc;
-  }, [broadcast, updatePeer, removePeer, turnUrl, activeStreamKind]);
+  }, [broadcast, updatePeer, removePeer, turnUrl, localPeerId, localName, localRole]);
 
   // ─── Initiate offer to a peer ─────────────────────────────────────────────
 
@@ -413,6 +465,12 @@ export function useWebRTC({
       await handleIceCandidate(payload.from, payload.candidate);
     });
 
+    // Broadcast: request a fresh offer after an ICE failure.
+    channel.on('broadcast', { event: 'reconnect_request' }, ({ payload }) => {
+      if (payload.to !== localPeerId || !payload.fromInfo) return;
+      initiateOffer(payload.from, payload.fromInfo as PeerInfo).catch(console.warn);
+    });
+
     // Broadcast: media state changes
     channel.on('broadcast', { event: 'media_state' }, ({ payload }) => {
       updatePeer(payload.from, {
@@ -466,8 +524,10 @@ export function useWebRTC({
         const existingSender = senders.find(s => s.track?.kind === track.kind || (!s.track && track.kind === 'video'));
         if (existingSender) {
           await existingSender.replaceTrack(track).catch(console.warn);
+          await tuneSender(existingSender);
         } else {
-          pc.addTrack(track, newStream);
+          const sender = pc.addTrack(track, newStream);
+          await tuneSender(sender);
           needsRenegotiation = true;
         }
       }
@@ -487,7 +547,12 @@ export function useWebRTC({
     try {
       setMediaError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        video: {
+          width: { ideal: 640, max: 1280 },
+          height: { ideal: 360, max: 720 },
+          frameRate: { ideal: 24, max: 30 },
+          facingMode: 'user',
+        },
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -497,8 +562,9 @@ export function useWebRTC({
       });
 
       const audioTrack = stream.getAudioTracks()[0];
+      const shouldEnableMic = localRole !== 'student' || micStateRef.current === 'on';
       if (audioTrack) {
-        audioTrack.enabled = micStateRef.current === 'on';
+        audioTrack.enabled = shouldEnableMic;
         await audioTrack.applyConstraints({
           echoCancellation: true,
           noiseSuppression: true,
@@ -510,16 +576,17 @@ export function useWebRTC({
       localStreamRef.current = stream;
       setLocalStream(stream);
       setCameraState('on');
+      if (shouldEnableMic) setMicState('on');
       setActiveStreamKind('camera');
 
       await syncTracksWithPeers(stream, 'camera');
 
-      broadcast('media_state', { micState: micStateRef.current, cameraState: 'on' });
+      broadcast('media_state', { micState: shouldEnableMic ? 'on' : 'off', cameraState: 'on' });
     } catch (err) {
       console.error('Camera error:', err);
       setMediaError('Could not access camera. Please check camera permissions in your browser.');
     }
-  }, [syncTracksWithPeers, broadcast]);
+  }, [syncTracksWithPeers, broadcast, localRole]);
 
   const stopCamera = useCallback(() => {
     if (localStreamRef.current) {
