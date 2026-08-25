@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   MessageCircle, Users,
@@ -19,7 +19,7 @@ import { useWebRTC } from '@/hooks/useWebRTC';
 import { useLiveChat } from '@/hooks/useLiveChat';
 import { useLivePresence } from '@/hooks/useLivePresence';
 import type {
-  ExerciseQuestion, ExerciseResult, StudentAnswer, SharedBroadcastState, ParticipantRole
+  ExerciseQuestion, ExerciseResult, StudentAnswer, ExerciseProgress, SharedBroadcastState, ParticipantRole
 } from '@/types/live-class';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,9 +260,16 @@ export default function LiveClassRoom() {
   // ─── Exercise state ────────────────────────────────────────────────────────
 
   const [exerciseResults, setExerciseResults] = useState<ExerciseResult[]>([]);
+  const [exerciseProgress, setExerciseProgress] = useState<Record<string, ExerciseProgress>>({});
+  const [exerciseId, setExerciseId] = useState('');
   const [exerciseActive, setExerciseActive] = useState(false);
   const [studentSubmitted, setStudentSubmitted] = useState(false);
   const [showPreExModal, setShowPreExModal] = useState(false);
+  const questionsRef = useRef(questions);
+  const exerciseIdRef = useRef(exerciseId);
+
+  useEffect(() => { questionsRef.current = questions; }, [questions]);
+  useEffect(() => { exerciseIdRef.current = exerciseId; }, [exerciseId]);
 
   // Listen for exercise events
   useEffect(() => {
@@ -277,22 +284,59 @@ export default function LiveClassRoom() {
     }
 
     if (isHost) {
+      ch.on('broadcast', { event: 'exercise_progress' }, ({ payload }) => {
+        const progress = payload as ExerciseProgress;
+        if (progress.studentId && progress.exerciseId && (!exerciseIdRef.current || progress.exerciseId === exerciseIdRef.current)) {
+          setExerciseProgress(prev => ({ ...prev, [progress.studentId]: progress }));
+        }
+      });
+
       ch.on('broadcast', { event: 'exercise_submit' }, ({ payload }) => {
+        const submittedResult = payload as ExerciseResult;
+        const gradedAnswers = submittedResult.answers.map(answer => {
+          const question = questionsRef.current.find(item => item.id === answer.questionId);
+          const correct = Boolean(question && answer.answer.trim().toLowerCase() === question.correctAnswer.trim().toLowerCase());
+          return { ...answer, correct };
+        });
+        const totalPoints = questionsRef.current.reduce((sum, question) => sum + question.points, 0);
+        const earnedPoints = gradedAnswers.reduce((sum, answer) => {
+          const question = questionsRef.current.find(item => item.id === answer.questionId);
+          return sum + (answer.correct ? question?.points ?? 0 : 0);
+        }, 0);
+        const result: ExerciseResult = {
+          ...submittedResult,
+          answers: gradedAnswers,
+          totalPoints,
+          earnedPoints,
+          score: totalPoints ? Math.round((earnedPoints / totalPoints) * 100) : 0,
+        };
         setExerciseResults(prev => {
-          if (prev.some(r => r.studentId === payload.studentId)) return prev;
-          return [...prev, payload as ExerciseResult];
+          const withoutStudent = prev.filter(item => item.studentId !== result.studentId);
+          return [...withoutStudent, result];
+        });
+        setExerciseProgress(prev => {
+          const current = prev[result.studentId];
+          return current ? { ...prev, [result.studentId]: { ...current, submitted: true, updatedAt: Date.now() } } : prev;
         });
       });
     }
+
   }, [channelRef, channel, localRole, isHost]);
 
   const handleStartExercise = useCallback(() => {
-    setExerciseActive(true);
+    setExerciseActive(localRole === 'student');
     setStudentSubmitted(false);
     setShowPreExModal(false);
+    const nextExerciseId = crypto.randomUUID();
+    setExerciseId(nextExerciseId);
+    setExerciseResults([]);
+    setExerciseProgress({});
     // Broadcast to students
-    broadcastEvent('exercise_launch', { questions: questions.map(q => ({ id: q.id, text: q.text, options: q.options, type: q.type, points: q.points })) });
-  }, [broadcastEvent, questions]);
+    broadcastEvent('exercise_launch', {
+      exerciseId: nextExerciseId,
+      questions: questions.map(q => ({ id: q.id, text: q.text, options: q.options, type: q.type, points: q.points, correctAnswer: q.correctAnswer, explanation: q.explanation })),
+    });
+  }, [broadcastEvent, questions, localRole]);
 
   const handleExerciseSubmit = useCallback((answers: StudentAnswer[]) => {
     setStudentSubmitted(true);
@@ -403,6 +447,14 @@ export default function LiveClassRoom() {
     broadcastEvent('lower_hand', { target: id });
   };
 
+  const handleUpdateBroadcast = useCallback((state: SharedBroadcastState) => {
+    setBroadcastState(state);
+    broadcastEvent('exercise_results_broadcast', {
+      ...state,
+      exerciseResults,
+    });
+  }, [broadcastEvent, exerciseResults]);
+
   // ─────────────────────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────────────────────
@@ -499,8 +551,8 @@ export default function LiveClassRoom() {
             broadcastState={broadcastState}
             exerciseResults={exerciseResults}
             questions={questions}
-            onSelectStudentForBroadcast={(id) => setBroadcastState(prev => ({ ...prev, isSharing: true, sharedStudentId: id }))}
-            onStopBroadcast={() => setBroadcastState({ isSharing: false, sharedStudentId: null, sharedQuestionId: null })}
+            onSelectStudentForBroadcast={(id) => handleUpdateBroadcast({ isSharing: true, sharedStudentId: id })}
+            onStopBroadcast={() => handleUpdateBroadcast({ isSharing: false, sharedStudentId: null, sharedQuestionId: null })}
           />
 
           {/* Teacher action bar */}
@@ -582,10 +634,11 @@ export default function LiveClassRoom() {
         onToggleMic={toggleMic}
         onToggleCamera={toggleCamera}
         exerciseResults={exerciseResults}
+        exerciseProgress={exerciseProgress}
         questions={questions}
         participants={participants}
         broadcastState={broadcastState}
-        onUpdateBroadcast={setBroadcastState}
+        onUpdateBroadcast={handleUpdateBroadcast}
         onMuteAll={muteAll}
         onDisableAllCameras={disableAllCameras}
         onLowerAllHands={lowerAllHands}
@@ -598,11 +651,11 @@ export default function LiveClassRoom() {
         exerciseResults={exerciseResults}
         onAddResult={(res) => setExerciseResults(prev => [...prev, res])}
         onBroadcastStudent={(studentId) => {
-          setBroadcastState({ isSharing: true, sharedStudentId: studentId });
+          handleUpdateBroadcast({ isSharing: true, sharedStudentId: studentId });
           setIsRNPHubOpen(false);
         }}
         onBroadcastResultsList={() => {
-          setBroadcastState({ isSharing: true, sharedStudentId: null, message: 'Class Scoreboard' });
+          handleUpdateBroadcast({ isSharing: true, sharedStudentId: null, message: 'Class Scoreboard' });
           setIsRNPHubOpen(false);
         }}
       />
@@ -690,7 +743,7 @@ export default function LiveClassRoom() {
       )}
 
       {/* Student exercise overlay */}
-      {exerciseActive && !studentSubmitted && (
+      {localRole === 'student' && exerciseActive && !studentSubmitted && (
         <LiveExercise
           questions={questions}
           exerciseTitle="Rwanda Traffic Law & Signals Test"

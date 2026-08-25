@@ -5,7 +5,7 @@ import {
   RefreshCw, Radio
 } from 'lucide-react';
 import type {
-  ExerciseResult, ExerciseQuestion, Participant, SharedBroadcastState
+  ExerciseResult, ExerciseQuestion, ExerciseProgress, Participant, SharedBroadcastState
 } from '@/types/live-class';
 
 interface LiveClassSettingsModalProps {
@@ -17,6 +17,7 @@ interface LiveClassSettingsModalProps {
   onToggleMic: () => void;
   onToggleCamera: () => void;
   exerciseResults: ExerciseResult[];
+  exerciseProgress?: Record<string, ExerciseProgress>;
   questions: ExerciseQuestion[];
   participants: Participant[];
   broadcastState: SharedBroadcastState;
@@ -36,6 +37,7 @@ export default function LiveClassSettingsModal({
   onToggleMic,
   onToggleCamera,
   exerciseResults,
+  exerciseProgress = {},
   questions,
   participants,
   broadcastState,
@@ -235,17 +237,61 @@ export default function LiveClassSettingsModal({
           {activeTab === 'exercise' && (
             <div className="h-full flex flex-col min-h-0">
               {exerciseResults.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-white rounded-2xl border border-dashed border-slate-300">
-                  <div className="w-16 h-16 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center mb-4">
-                    <Award size={32} />
-                  </div>
-                  <h3 className="font-bold text-slate-800 text-lg mb-1">No Exercise Submitted Yet</h3>
-                  <p className="text-slate-500 text-sm max-w-md mb-6">
-                    Launch a live exercise from the class room bar. Once students complete the questions, their scores, time spent, and detailed correct/incorrect answers will appear here in real-time.
-                  </p>
+                <div className="flex-1 flex flex-col p-6 bg-white rounded-2xl border border-slate-200 overflow-y-auto">
+                  {Object.values(exerciseProgress).length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center">
+                      <div className="w-16 h-16 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center mb-4">
+                        <Award size={32} />
+                      </div>
+                      <h3 className="font-bold text-slate-800 text-lg mb-1">No Exercise Submitted Yet</h3>
+                      <p className="text-slate-500 text-sm max-w-md mb-6">
+                        Launch a live exercise from the class room bar. Student progress and final answers will appear here in real-time.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-bold text-slate-800 text-lg">Live Student Progress</h3>
+                          <p className="text-slate-500 text-sm">Students are answering this exercise now.</p>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-200">LIVE</span>
+                      </div>
+                      <div className="space-y-2">
+                        {Object.values(exerciseProgress).map(progress => (
+                          <div key={progress.studentId} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
+                            <div>
+                              <div className="text-sm font-bold text-slate-800">{progress.studentName}</div>
+                              <div className="text-xs text-slate-500">Question {Math.min(progress.currentQuestion + 1, progress.totalQuestions)} of {progress.totalQuestions}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm font-extrabold text-purple-600">{progress.answeredCount}/{progress.totalQuestions} answered</div>
+                              <div className="text-[11px] text-slate-500">{progress.submitted ? 'Submitted' : 'In progress'}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="h-full flex flex-col lg:flex-row gap-6 min-h-0">
+                <div className="h-full flex flex-col min-h-0 gap-3">
+                  {Object.values(exerciseProgress).length > 0 && (
+                    <div className="flex-shrink-0 bg-purple-50 border border-purple-200 rounded-xl px-3 py-2">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold text-purple-800">Live answer progress</span>
+                        <span className="text-[11px] text-purple-600">{Object.values(exerciseProgress).filter(progress => !progress.submitted).length} still answering</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.values(exerciseProgress).map(progress => (
+                          <span key={progress.studentId} className="px-2 py-1 rounded-lg bg-white border border-purple-100 text-[11px] text-slate-700">
+                            <strong>{progress.studentName}</strong> {progress.answeredCount}/{progress.totalQuestions}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0">
                   {/* Left Column: Summary & Student List */}
                   <div className={`flex flex-col min-h-0 ${selectedStudent ? 'w-full lg:w-1/2' : 'w-full'}`}>
                     
@@ -491,10 +537,11 @@ export default function LiveClassSettingsModal({
                             </div>
                           );
                         })}
-                      </div>
-                    </div>
-                  )}
+                  </div>
                 </div>
+              )}
+              </div>
+              </div>
               )}
             </div>
           )}

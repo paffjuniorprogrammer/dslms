@@ -52,6 +52,18 @@ export interface ExerciseResult {
   timeSpentSeconds?: number;
 }
 
+export interface ExerciseProgress {
+  exerciseId: string;
+  studentId: string;
+  studentName: string;
+  currentQuestion: number;
+  answeredCount: number;
+  totalQuestions: number;
+  answers: Record<string, string>;
+  submitted: boolean;
+  updatedAt: number;
+}
+
 export interface SharedBroadcastState {
   isSharing: boolean;
   sharedStudentId?: string | null;

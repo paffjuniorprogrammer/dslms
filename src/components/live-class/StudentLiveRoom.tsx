@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { useWebRTC } from '@/hooks/useWebRTC';
 import { useLiveChat } from '@/hooks/useLiveChat';
-import type { ExerciseQuestion, StudentAnswer, ExerciseResult } from '@/types/live-class';
+import type { ExerciseQuestion, StudentAnswer, ExerciseResult, ExerciseProgress, SharedBroadcastState } from '@/types/live-class';
 
 interface StudentLiveRoomProps {
   classId: string;
@@ -85,16 +85,34 @@ export default function StudentLiveRoom({
   }, [remotePeers]);
 
   const hostStream = hostPeer?.stream ?? null;
-  const hasHostVideo = Boolean(hostStream && hostPeer?.cameraState === 'on');
+  const hasHostVideo = Boolean(hostStream?.getVideoTracks().some(track => track.readyState === 'live' && track.enabled));
 
   // ─── Exercise state (received from host) ──────────────────────────────────
 
   const [exerciseActive, setExerciseActive] = useState(false);
+  const [exerciseId, setExerciseId] = useState('');
   const [exerciseQuestions, setExerciseQuestions] = useState<ExerciseQuestion[]>([]);
   const [currentQ, setCurrentQ] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
   const [exerciseResult, setExerciseResult] = useState<ExerciseResult | null>(null);
+  const [sharedBroadcast, setSharedBroadcast] = useState<SharedBroadcastState | null>(null);
+  const [sharedBroadcastResults, setSharedBroadcastResults] = useState<ExerciseResult[]>([]);
+  const micStateRef = useRef(micState);
+  const cameraStateRef = useRef(cameraState);
+  const localHandRaisedRef = useRef(localHandRaised);
+  const toggleMicRef = useRef(toggleMic);
+  const toggleCameraRef = useRef(toggleCamera);
+  const toggleHandRef = useRef(toggleHand);
+  const onLeaveRef = useRef(onLeave);
+
+  useEffect(() => { micStateRef.current = micState; }, [micState]);
+  useEffect(() => { cameraStateRef.current = cameraState; }, [cameraState]);
+  useEffect(() => { localHandRaisedRef.current = localHandRaised; }, [localHandRaised]);
+  useEffect(() => { toggleMicRef.current = toggleMic; }, [toggleMic]);
+  useEffect(() => { toggleCameraRef.current = toggleCamera; }, [toggleCamera]);
+  useEffect(() => { toggleHandRef.current = toggleHand; }, [toggleHand]);
+  useEffect(() => { onLeaveRef.current = onLeave; }, [onLeave]);
 
   useEffect(() => {
     const ch = channelRef.current;
@@ -106,6 +124,7 @@ export default function StudentLiveRoom({
           ...q,
           correctAnswer: q.correctAnswer || '',
         }));
+        setExerciseId((payload.exerciseId as string) || `exercise-${Date.now()}`);
         setExerciseQuestions(qs);
         setCurrentQ(0);
         setAnswers({});
@@ -115,38 +134,66 @@ export default function StudentLiveRoom({
       }
     });
 
+    ch.on('broadcast', { event: 'exercise_results_broadcast' }, ({ payload }) => {
+      setSharedBroadcast({
+        isSharing: Boolean(payload.isSharing),
+        sharedStudentId: (payload.sharedStudentId as string | null) ?? null,
+        message: payload.message as string | undefined,
+      });
+      setSharedBroadcastResults(Array.isArray(payload.exerciseResults) ? payload.exerciseResults as ExerciseResult[] : []);
+    });
+
     // Handle mute / removal from host
     ch.on('broadcast', { event: 'mute_all' }, () => {
-      if (micState === 'on') toggleMic();
+      if (micStateRef.current === 'on') toggleMicRef.current();
     });
 
     ch.on('broadcast', { event: 'mute_participant' }, ({ payload }) => {
-      if (payload.target === studentId && micState === 'on') toggleMic();
+      if (payload.target === studentId && micStateRef.current === 'on') toggleMicRef.current();
     });
 
     ch.on('broadcast', { event: 'disable_participant_camera' }, ({ payload }) => {
-      if (payload.target === studentId && cameraState === 'on') toggleCamera();
+      if (payload.target === studentId && cameraStateRef.current === 'on') toggleCameraRef.current();
     });
 
     ch.on('broadcast', { event: 'disable_all_cameras' }, () => {
-      if (cameraState === 'on') toggleCamera();
+      if (cameraStateRef.current === 'on') toggleCameraRef.current();
     });
 
     ch.on('broadcast', { event: 'remove_participant' }, ({ payload }) => {
       if (payload.target === studentId) {
         alert('You have been removed from this class by the teacher.');
-        onLeave();
+        onLeaveRef.current();
       }
     });
 
     ch.on('broadcast', { event: 'lower_hand' }, ({ payload }) => {
-      if (payload.target === studentId && localHandRaised) toggleHand();
+      if (payload.target === studentId && localHandRaisedRef.current) toggleHandRef.current();
     });
-  }, [channel, channelRef, micState, cameraState, studentId, toggleMic, toggleCamera, toggleHand, localHandRaised, onLeave]);
+
+  }, [channel, channelRef, studentId]);
 
   const handleSelectAnswer = (questionId: string, answer: string) => {
     setAnswers(prev => ({ ...prev, [questionId]: answer }));
   };
+
+  // Broadcast progress after every answer or question navigation so the teacher
+  // can see who is active, how many answers are complete, and the current item.
+  useEffect(() => {
+    if (!exerciseActive || !exerciseId || exerciseQuestions.length === 0) return;
+    const progress: ExerciseProgress = {
+      exerciseId,
+      studentId,
+      studentName,
+      currentQuestion: currentQ,
+      answeredCount: Object.values(answers).filter(Boolean).length,
+      totalQuestions: exerciseQuestions.length,
+      answers,
+      submitted,
+      updatedAt: Date.now(),
+    };
+    broadcastEvent('exercise_progress', progress as unknown as Record<string, unknown>);
+  }, [exerciseActive, exerciseId, exerciseQuestions.length, currentQ, answers, submitted, studentId, studentName, broadcastEvent]);
 
   const handleSubmitExercise = useCallback(() => {
     if (exerciseQuestions.length === 0) return;
@@ -446,6 +493,38 @@ export default function StudentLiveRoom({
         )}
 
       </div>
+
+      {/* Teacher result/answer broadcast */}
+      {sharedBroadcast?.isSharing && (
+        <div className="absolute top-3 left-3 right-3 z-40 bg-slate-950/95 border border-purple-500/40 rounded-2xl p-4 shadow-2xl">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-wider text-purple-300">Teacher Broadcast</div>
+              <h3 className="text-sm font-extrabold text-white">{sharedBroadcast.message || 'Live exercise results shared with the class'}</h3>
+            </div>
+            <button onClick={() => setSharedBroadcast(null)} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10" aria-label="Close broadcast"><X size={15} /></button>
+          </div>
+          {sharedBroadcast.sharedStudentId ? (
+            <div className="space-y-2">
+              {sharedBroadcastResults.filter(result => result.studentId === sharedBroadcast.sharedStudentId).map(result => (
+                <div key={result.studentId} className="flex items-center justify-between rounded-xl bg-purple-950/40 border border-purple-500/30 px-3 py-2">
+                  <span className="text-xs font-bold text-white">{result.studentName}</span>
+                  <span className="text-sm font-black text-purple-300">{result.score}%</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {sharedBroadcastResults.map(result => (
+                <div key={result.studentId} className="rounded-xl bg-slate-900 border border-white/10 px-3 py-2">
+                  <div className="text-[11px] font-bold text-white truncate">{result.studentName}</div>
+                  <div className="text-sm font-black text-emerald-300">{result.score}%</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Pop-up Quiz / Live Exercise Overlay */}
       {exerciseActive && (

@@ -98,6 +98,7 @@ export function useWebRTC({
 
   // Refs (stable across renders)
   const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
   const channelRef = useRef<RealtimeChannel | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
@@ -147,6 +148,7 @@ export function useWebRTC({
   const removePeer = useCallback((peerId: string) => {
     peerConnections.current.get(peerId)?.close();
     peerConnections.current.delete(peerId);
+    remoteStreamsRef.current.delete(peerId);
     makingOfferRef.current.delete(peerId);
     pendingIceCandidatesRef.current.delete(peerId);
     setRemotePeers(prev => {
@@ -200,15 +202,20 @@ export function useWebRTC({
       }
     };
 
-    // Remote tracks → attach to remote stream
+    // Remote tracks may arrive as separate audio/video events. Keep one
+    // aggregate stream per peer instead of replacing the stream on each event.
     pc.ontrack = (event) => {
-      const [remoteStream] = event.streams;
-      if (remoteStream) {
-        updatePeer(remotePeerId, { stream: remoteStream });
-      } else if (event.track) {
-        const fallbackStream = new MediaStream([event.track]);
-        updatePeer(remotePeerId, { stream: fallbackStream });
-      }
+      const remoteStream = remoteStreamsRef.current.get(remotePeerId) ?? new MediaStream();
+      const incomingTracks = event.streams[0]?.getTracks() ?? (event.track ? [event.track] : []);
+
+      incomingTracks.forEach(track => {
+        if (!remoteStream.getTrackById(track.id)) {
+          remoteStream.addTrack(track);
+        }
+      });
+
+      remoteStreamsRef.current.set(remotePeerId, remoteStream);
+      updatePeer(remotePeerId, { stream: remoteStream });
     };
 
     // Connection state monitoring
@@ -445,9 +452,11 @@ export function useWebRTC({
 
   // ─── Track replacement & renegotiation across peers ────────────────────────
 
-  const syncTracksWithPeers = useCallback(async (newStream: MediaStream | null) => {
+  const syncTracksWithPeers = useCallback(async (newStream: MediaStream | null, streamKind: StreamKind = activeStreamKind || 'camera') => {
     if (!newStream) return;
-    const tracks = newStream.getTracks();
+    // Display audio must not replace the microphone sender. Screen sharing
+    // changes video only; camera/mic changes synchronize both media kinds.
+    const tracks = streamKind === 'screen' ? newStream.getVideoTracks() : newStream.getTracks();
 
     for (const [peerId, pc] of peerConnections.current.entries()) {
       let needsRenegotiation = false;
@@ -470,7 +479,7 @@ export function useWebRTC({
         }
       }
     }
-  }, [initiateOffer, remotePeers]);
+  }, [initiateOffer, remotePeers, activeStreamKind]);
 
   // ─── Media controls ────────────────────────────────────────────────────────
 
@@ -485,11 +494,12 @@ export function useWebRTC({
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) audioTrack.enabled = micStateRef.current === 'on';
 
+      localStreamRef.current = stream;
       setLocalStream(stream);
       setCameraState('on');
       setActiveStreamKind('camera');
 
-      await syncTracksWithPeers(stream);
+      await syncTracksWithPeers(stream, 'camera');
 
       broadcast('media_state', { micState: micStateRef.current, cameraState: 'on' });
     } catch (err) {
@@ -545,10 +555,11 @@ export function useWebRTC({
         ? new MediaStream([...localStreamRef.current.getTracks(), audioTrack])
         : new MediaStream([audioTrack]);
 
+      localStreamRef.current = newStream;
       setLocalStream(newStream);
       setMicState('on');
 
-      await syncTracksWithPeers(newStream);
+      await syncTracksWithPeers(newStream, 'camera');
 
       broadcast('media_state', { micState: 'on', cameraState: cameraStateRef.current });
     } catch (err) {
@@ -577,20 +588,22 @@ export function useWebRTC({
       const videoTrack = stream.getVideoTracks()[0];
 
       videoTrack.onended = () => {
+        screenStreamRef.current = null;
         setScreenStream(null);
         setIsScreenSharing(false);
         setActiveStreamKind(cameraStateRef.current === 'on' ? 'camera' : null);
         // Re-attach camera
         if (localStreamRef.current && cameraStateRef.current === 'on') {
-          syncTracksWithPeers(localStreamRef.current);
+          syncTracksWithPeers(localStreamRef.current, 'camera');
         }
       };
 
+      screenStreamRef.current = stream;
       setScreenStream(stream);
       setIsScreenSharing(true);
       setActiveStreamKind('screen');
 
-      await syncTracksWithPeers(stream);
+      await syncTracksWithPeers(stream, 'screen');
     } catch (err) {
       console.error('Screen share error:', err);
       setMediaError('Screen sharing cancelled or denied.');
@@ -599,12 +612,13 @@ export function useWebRTC({
 
   const stopScreenShare = useCallback(() => {
     screenStreamRef.current?.getTracks().forEach(t => t.stop());
+    screenStreamRef.current = null;
     setScreenStream(null);
     setIsScreenSharing(false);
     setActiveStreamKind(cameraStateRef.current === 'on' ? 'camera' : null);
 
     if (localStreamRef.current && cameraStateRef.current === 'on') {
-      syncTracksWithPeers(localStreamRef.current);
+      syncTracksWithPeers(localStreamRef.current, 'camera');
     }
   }, [syncTracksWithPeers]);
 
