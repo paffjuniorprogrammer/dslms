@@ -88,7 +88,11 @@ export default function JitsiClassroom({ classId, displayName, role, onJoined }:
       // Keep the iframe mounted so its own retry and permission UI remains usable.
       api.addListener('errorOccurred', (...args: unknown[]) => {
         console.warn('Jitsi classroom warning', ...args);
-        setRuntimeWarning('Jitsi is still connecting. Check camera/microphone permissions or retry from the meeting controls.');
+        setRuntimeWarning(
+          role === 'teacher'
+            ? 'Public Jitsi requires the first teacher to sign in once as the moderator. This is separate from your DSLMS login.'
+            : 'Waiting for the teacher to start the classroom. Students do not need a Jitsi login.'
+        );
       });
     };
 
@@ -130,9 +134,9 @@ export default function JitsiClassroom({ classId, displayName, role, onJoined }:
         </div>
       )}
       {runtimeWarning && status !== 'joined' && (
-        <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl bg-amber-500 px-3 py-2 text-[11px] font-bold text-slate-950 shadow-xl">
+        <div className="absolute top-3 right-3 z-20 flex max-w-[min(90%,34rem)] items-center gap-2 rounded-xl bg-amber-500 px-3 py-2 text-[11px] font-bold text-slate-950 shadow-xl">
           <span>{runtimeWarning}</span>
-          <button onClick={() => window.location.reload()} className="rounded-lg bg-slate-950/20 px-2 py-1 underline">Retry</button>
+          <button onClick={() => window.location.reload()} className="shrink-0 rounded-lg bg-slate-950/20 px-2 py-1 underline">Retry</button>
         </div>
       )}
       {status === 'error' && (

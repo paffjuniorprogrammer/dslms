@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Video, BookOpen, Award, BarChart3,
   MapPin, Phone, Mail, User, ShieldCheck, ArrowRight,
@@ -26,8 +26,10 @@ interface NotificationItem {
 
 export default function StudentMobilePortal() {
   const { language, setLanguage } = useI18n();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { profile, session: authSession } = useAuth();
+  const { profile, session: authSession, signOut } = useAuth();
+  const [loggingOut, setLoggingOut] = useState(false);
 
   // Bottom Navigation Active Tab
   const [activeTab, setActiveTab] = useState<'dashboard' | 'classes' | 'profile'>('dashboard');
@@ -37,6 +39,19 @@ export default function StudentMobilePortal() {
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
+  };
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await signOut();
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error('Student logout failed:', error);
+      showToast('Logout failed. Please try again.');
+      setLoggingOut(false);
+    }
   };
 
   // Notifications Drawer State
@@ -936,10 +951,11 @@ export default function StudentMobilePortal() {
                 </button>
 
                 <button
-                  onClick={() => showToast('👋 Logged out safely')}
-                  className="w-full py-3 rounded-2xl bg-rose-50 text-rose-600 hover:bg-rose-100 font-extrabold text-xs transition-all flex items-center justify-center gap-2"
+                  onClick={() => void handleLogout()}
+                  disabled={loggingOut}
+                  className="w-full py-3 rounded-2xl bg-rose-50 text-rose-600 hover:bg-rose-100 disabled:opacity-60 disabled:cursor-not-allowed font-extrabold text-xs transition-all flex items-center justify-center gap-2"
                 >
-                  <LogOut size={16} /> Logout from App
+                  <LogOut size={16} /> {loggingOut ? 'Logging out…' : 'Logout from App'}
                 </button>
               </div>
             </div>
