@@ -98,6 +98,7 @@ export default function StudentLiveRoom({
   const [exerciseResult, setExerciseResult] = useState<ExerciseResult | null>(null);
   const [sharedBroadcast, setSharedBroadcast] = useState<SharedBroadcastState | null>(null);
   const [sharedBroadcastResults, setSharedBroadcastResults] = useState<ExerciseResult[]>([]);
+  const [presentedQuestion, setPresentedQuestion] = useState<ExerciseQuestion | null>(null);
   const micStateRef = useRef(micState);
   const cameraStateRef = useRef(cameraState);
   const localHandRaisedRef = useRef(localHandRaised);
@@ -141,6 +142,23 @@ export default function StudentLiveRoom({
         message: payload.message as string | undefined,
       });
       setSharedBroadcastResults(Array.isArray(payload.exerciseResults) ? payload.exerciseResults as ExerciseResult[] : []);
+    });
+
+    ch.on('broadcast', { event: 'question_present' }, ({ payload }) => {
+      const question = payload.question as Partial<ExerciseQuestion> | undefined;
+      if (!question?.id || !question.text) return;
+      setPresentedQuestion({
+        id: question.id,
+        text: question.text,
+        type: question.type === 'true_false' ? 'true_false' : 'multiple_choice',
+        options: Array.isArray(question.options) ? question.options : [],
+        correctAnswer: '',
+        points: Number(question.points) || 0,
+      });
+    });
+
+    ch.on('broadcast', { event: 'question_present_close' }, () => {
+      setPresentedQuestion(null);
     });
 
     // Handle mute / removal from host
@@ -493,6 +511,28 @@ export default function StudentLiveRoom({
         )}
 
       </div>
+
+      {/* Teacher question presenter */}
+      {presentedQuestion && !exerciseActive && (
+        <div className="absolute inset-0 z-40 bg-slate-950/95 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl rounded-3xl bg-slate-900 border border-blue-500/40 shadow-2xl p-6 sm:p-10">
+            <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-red-300 mb-4"><Radio size={14} className="animate-pulse" /> Teacher is presenting</div>
+            <div className="text-xs text-blue-300 font-bold uppercase tracking-wide mb-3">Follow along · {presentedQuestion.points} marks</div>
+            <h2 className="text-2xl sm:text-4xl font-black leading-tight text-white">{presentedQuestion.text}</h2>
+            {presentedQuestion.options.length > 0 && (
+              <div className="grid gap-3 mt-8">
+                {presentedQuestion.options.map((option, index) => (
+                  <div key={`${presentedQuestion.id}-${index}`} className="flex items-center gap-3 p-3 sm:p-4 rounded-2xl bg-white/5 border border-white/10 text-sm sm:text-lg text-slate-200">
+                    <span className="w-8 h-8 shrink-0 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-sm font-black text-blue-200">{String.fromCharCode(65 + index)}</span>
+                    <span>{option}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-slate-400 mt-6">Listen to your teacher’s explanation. The teacher will close this presentation when ready.</p>
+          </div>
+        </div>
+      )}
 
       {/* Teacher result/answer broadcast */}
       {sharedBroadcast?.isSharing && (

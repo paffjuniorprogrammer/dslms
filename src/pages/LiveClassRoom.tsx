@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   MessageCircle, Users,
   ClipboardList, BarChart3, Copy, Check, Radio,
-  ChevronLeft, Award, Sparkles
+  ChevronLeft, Award, Sparkles, MonitorUp
 } from 'lucide-react';
 import VideoStage from '@/components/live-class/VideoStage';
 import MediaControls from '@/components/live-class/MediaControls';
@@ -12,6 +12,7 @@ import ParticipantsPanel from '@/components/live-class/ParticipantsPanel';
 import LiveExercise from '@/components/live-class/LiveExercise';
 import LiveClassSettingsModal from '@/components/live-class/LiveClassSettingsModal';
 import RNPPhysicalClassPresenterModal from '@/components/live-class/RNPPhysicalClassPresenterModal';
+import LiveQuestionPresenter from '@/components/live-class/LiveQuestionPresenter';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { fetchQuestions, updateLiveClassStatus } from '@/lib/db';
@@ -265,6 +266,8 @@ export default function LiveClassRoom() {
   const [exerciseActive, setExerciseActive] = useState(false);
   const [studentSubmitted, setStudentSubmitted] = useState(false);
   const [showPreExModal, setShowPreExModal] = useState(false);
+  const [isQuestionPresenterOpen, setIsQuestionPresenterOpen] = useState(false);
+  const [presentingQuestionIndex, setPresentingQuestionIndex] = useState(0);
   const questionsRef = useRef(questions);
   const exerciseIdRef = useRef(exerciseId);
 
@@ -322,6 +325,28 @@ export default function LiveClassRoom() {
     }
 
   }, [channelRef, channel, localRole, isHost]);
+
+  const handlePresentQuestion = useCallback((index: number) => {
+    const question = questions[index];
+    if (!question) return;
+    setPresentingQuestionIndex(index);
+    broadcastEvent('question_present', {
+      index,
+      totalQuestions: questions.length,
+      question: {
+        id: question.id,
+        text: question.text,
+        type: question.type,
+        options: question.options,
+        points: question.points,
+      },
+    });
+  }, [broadcastEvent, questions]);
+
+  const handleCloseQuestionPresenter = useCallback(() => {
+    setIsQuestionPresenterOpen(false);
+    broadcastEvent('question_present_close', {});
+  }, [broadcastEvent]);
 
   const handleStartExercise = useCallback(() => {
     setExerciseActive(localRole === 'student');
@@ -559,6 +584,12 @@ export default function LiveClassRoom() {
           {isHost && !exerciseActive && (
             <div className="px-4 py-2.5 bg-slate-900/90 border-t border-white/10 flex items-center justify-center gap-3">
               <button
+                onClick={() => { setPresentingQuestionIndex(0); setIsQuestionPresenterOpen(true); handlePresentQuestion(0); }}
+                className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-500 transition-all shadow-md"
+              >
+                <MonitorUp size={16} /> Present Question Bank
+              </button>
+              <button
                 onClick={() => setShowPreExModal(true)}
                 className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-purple-600 rounded-xl hover:bg-purple-700 transition-all shadow-md"
               >
@@ -659,6 +690,15 @@ export default function LiveClassRoom() {
           setIsRNPHubOpen(false);
         }}
       />
+
+      {isQuestionPresenterOpen && (
+        <LiveQuestionPresenter
+          questions={questions}
+          currentIndex={presentingQuestionIndex}
+          onChange={handlePresentQuestion}
+          onClose={handleCloseQuestionPresenter}
+        />
+      )}
 
       {/* Pre-exercise modal */}
       {showPreExModal && (

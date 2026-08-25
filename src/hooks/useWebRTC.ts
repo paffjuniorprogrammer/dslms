@@ -488,11 +488,24 @@ export function useWebRTC({
       setMediaError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
       });
 
       const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) audioTrack.enabled = micStateRef.current === 'on';
+      if (audioTrack) {
+        audioTrack.enabled = micStateRef.current === 'on';
+        await audioTrack.applyConstraints({
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        }).catch(() => {});
+      }
 
       localStreamRef.current = stream;
       setLocalStream(stream);
@@ -548,8 +561,21 @@ export function useWebRTC({
         }
       }
 
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
       const audioTrack = audioStream.getAudioTracks()[0];
+      await audioTrack?.applyConstraints({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      }).catch(() => {});
 
       const newStream = localStreamRef.current
         ? new MediaStream([...localStreamRef.current.getTracks(), audioTrack])
