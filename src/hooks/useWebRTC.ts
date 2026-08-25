@@ -55,6 +55,13 @@ interface UseWebRTCOptions {
 // ICE Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
+function shouldInitiateOffer(localPeerId: string, localRole: ParticipantRole, remotePeerId: string, remoteRole: ParticipantRole) {
+  const localIsHost = localRole !== 'student';
+  const remoteIsHost = remoteRole !== 'student';
+  if (localIsHost !== remoteIsHost) return localIsHost;
+  return localPeerId > remotePeerId;
+}
+
 function getIceConfig(turnUrl?: string): RTCConfiguration {
   const iceServers: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -448,8 +455,8 @@ export function useWebRTC({
               cameraState: (presence['cameraState'] as MediaState) || 'off',
               handRaised: Boolean(presence['handRaised']),
             });
-            // Deterministic offer initiator: peer with larger ID initiates
-            if (localPeerId > peerId) {
+            // Teacher/host initiates toward students; same-role peers use a stable ID tie-breaker.
+            if (shouldInitiateOffer(localPeerId, localRole, peerId, role)) {
               initiateOffer(peerId, { peerId, name, role }).catch(console.warn);
             }
           }
@@ -471,8 +478,8 @@ export function useWebRTC({
             cameraState: (presence['cameraState'] as MediaState) || 'off',
             handRaised: Boolean(presence['handRaised']),
           });
-          // Deterministic offer initiator
-          if (localPeerId > peerId) {
+          // Teacher/host initiates toward students; same-role peers use a stable ID tie-breaker.
+          if (shouldInitiateOffer(localPeerId, localRole, peerId, role)) {
             initiateOffer(peerId, { peerId, name, role }).catch(console.warn);
           }
         }
@@ -500,6 +507,16 @@ export function useWebRTC({
     channel.on('broadcast', { event: 'ice' }, async ({ payload }) => {
       if (payload.to !== localPeerId) return;
       await handleIceCandidate(payload.from, payload.candidate);
+    });
+
+    // Explicit ready handshake covers the case where a presence join event is missed.
+    channel.on('broadcast', { event: 'peer_ready' }, ({ payload }) => {
+      const peerInfo = payload.fromInfo as PeerInfo | undefined;
+      if (!peerInfo || peerInfo.peerId === localPeerId) return;
+      updatePeer(peerInfo.peerId, { peerId: peerInfo.peerId, name: peerInfo.name, role: peerInfo.role });
+      if (shouldInitiateOffer(localPeerId, localRole, peerInfo.peerId, peerInfo.role)) {
+        initiateOffer(peerInfo.peerId, peerInfo).catch(console.warn);
+      }
     });
 
     // Broadcast: request a fresh offer after an ICE failure.
@@ -532,6 +549,14 @@ export function useWebRTC({
           role: localRole,
           micState: micStateRef.current,
           cameraState: cameraStateRef.current,
+        });
+        channel.send({
+          type: 'broadcast',
+          event: 'peer_ready',
+          payload: {
+            from: localPeerId,
+            fromInfo: { peerId: localPeerId, name: localName, role: localRole },
+          },
         });
       }
     });
