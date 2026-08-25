@@ -17,8 +17,6 @@ interface UseLiveChatOptions {
   senderId: string;
   senderName: string;
   senderRole: ParticipantRole;
-  /** Shared channel from useWebRTC (optional — can create own if not shared) */
-  channel?: RealtimeChannel | null;
 }
 
 function mapChatRow(row: {
@@ -46,16 +44,14 @@ export function useLiveChat({
   senderId,
   senderName,
   senderRole,
-  channel: externalChannel,
 }: UseLiveChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const ownChannelRef = useRef<RealtimeChannel | null>(null);
 
-  // Use external channel if available, otherwise create our own subscription
   const getChannel = useCallback((): RealtimeChannel | null => {
-    return externalChannel ?? ownChannelRef.current;
-  }, [externalChannel]);
+    return ownChannelRef.current;
+  }, []);
 
   // ─── Load message history from DB ─────────────────────────────────────────
 
@@ -101,58 +97,38 @@ export function useLiveChat({
       setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg].sort((a, b) => a.timestamp - b.timestamp));
     };
 
-    // If no external channel, create our own
-    if (!externalChannel) {
-      const ch = supabase.channel(`live_class_chat:${classId}`, {
-        config: { broadcast: { self: false } },
-      });
+    // Postgres listeners must be registered before subscribe(). Keep chat on a
+    // dedicated channel so the WebRTC channel can subscribe independently.
+    const ch = supabase.channel(`live_class_chat:${classId}`, {
+      config: { broadcast: { self: false } },
+    });
 
-      ch.on('broadcast', { event: 'chat' }, handleIncomingMessage);
-      ch.on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'live_class_messages',
-        filter: `class_id=eq.${classId}`,
-      }, handleDatabaseMessage);
+    ch.on('broadcast', { event: 'chat' }, handleIncomingMessage);
+    ch.on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'live_class_messages',
+      filter: `class_id=eq.${classId}`,
+    }, handleDatabaseMessage);
 
-      ch.on('broadcast', { event: 'pin_message' }, ({ payload }) => {
-        setMessages(prev =>
-          prev.map(m => m.id === payload.messageId ? { ...m, pinned: !m.pinned } : m)
-        );
-      });
+    ch.on('broadcast', { event: 'pin_message' }, ({ payload }) => {
+      setMessages(prev =>
+        prev.map(m => m.id === payload.messageId ? { ...m, pinned: !m.pinned } : m)
+      );
+    });
 
-      ch.on('broadcast', { event: 'delete_message' }, ({ payload }) => {
-        setMessages(prev => prev.filter(m => m.id !== payload.messageId));
-      });
+    ch.on('broadcast', { event: 'delete_message' }, ({ payload }) => {
+      setMessages(prev => prev.filter(m => m.id !== payload.messageId));
+    });
 
-      ch.subscribe();
-      ownChannelRef.current = ch;
+    ownChannelRef.current = ch;
+    ch.subscribe();
 
-      return () => {
-        ch.unsubscribe();
-        ownChannelRef.current = null;
-      };
-    } else {
-      // Listen on the shared channel for both instant broadcasts and durable inserts.
-      externalChannel.on('broadcast', { event: 'chat' }, handleIncomingMessage);
-      externalChannel.on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'live_class_messages',
-        filter: `class_id=eq.${classId}`,
-      }, handleDatabaseMessage);
-
-      externalChannel.on('broadcast', { event: 'pin_message' }, ({ payload }) => {
-        setMessages(prev =>
-          prev.map(m => m.id === payload.messageId ? { ...m, pinned: !m.pinned } : m)
-        );
-      });
-
-      externalChannel.on('broadcast', { event: 'delete_message' }, ({ payload }) => {
-        setMessages(prev => prev.filter(m => m.id !== payload.messageId));
-      });
-    }
-  }, [classId, externalChannel]);
+    return () => {
+      ch.unsubscribe();
+      ownChannelRef.current = null;
+    };
+  }, [classId]);
 
   // ─── Send a chat message ───────────────────────────────────────────────────
 

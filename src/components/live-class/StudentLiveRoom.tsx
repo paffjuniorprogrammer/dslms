@@ -70,7 +70,6 @@ export default function StudentLiveRoom({
     senderId: studentId,
     senderName: studentName,
     senderRole: 'student',
-    channel,
   });
 
   // ─── Find host / teacher stream ───────────────────────────────────────────

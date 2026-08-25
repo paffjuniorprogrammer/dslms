@@ -98,7 +98,7 @@ export default function LiveClassRoom() {
       const { data } = await supabase
         .from('live_classes')
         .select('title, access_code, class_type, license_category')
-        .or(`id.eq.${classId},access_code.eq.${classId}`)
+        .eq('id', classId)
         .maybeSingle();
 
       if (data) {
@@ -211,7 +211,6 @@ export default function LiveClassRoom() {
     senderId: localPeerId,
     senderName: localName,
     senderRole: localRole,
-    channel,
   });
 
   // ─── Live presence hook ────────────────────────────────────────────────────
